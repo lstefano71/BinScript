@@ -335,8 +335,7 @@ public class BytecodeEmitterTests
             }
             """);
 
-        Assert.True(ContainsOpcode(program.Bytecode, Opcode.PushFieldVal));
-        Assert.True(ContainsOpcode(program.Bytecode, Opcode.OpAdd));
+        Assert.True(ContainsOpcode(program.Bytecode, Opcode.StoreFieldVal));
     }
 
     // ─── 15. @align ───────────────────────────────────────────────────

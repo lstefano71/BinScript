@@ -9,4 +9,8 @@
     <IsTrimmable>true</IsTrimmable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <PackageReference Include="System.IO.Hashing" Version="*" />
+  </ItemGroup>
+
 </Project>

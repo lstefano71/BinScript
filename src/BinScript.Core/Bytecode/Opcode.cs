@@ -65,6 +65,7 @@ public enum Opcode : byte
     PushParam = 0x84,
     PushRuntimeVar = 0x85,
     PushIndex = 0x86,
+    StoreFieldVal = 0x87,
 
     // Arithmetic/logic
     OpAdd = 0x90,

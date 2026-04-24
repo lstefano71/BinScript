@@ -153,7 +153,7 @@ public sealed class BytecodeEmitter
         {
             EmitExpression(ctx, field.Modifiers.DerivedExpression);
             // The VM stores the expression result into the field.
-            ctx.Builder.Emit(Opcode.PushFieldVal);
+            ctx.Builder.Emit(Opcode.StoreFieldVal);
             ctx.Builder.EmitU16(fieldId);
             return;
         }
@@ -568,7 +568,7 @@ public sealed class BytecodeEmitter
         ushort fieldId = ctx.AllocateField(let.Name, new FieldModifiers { IsHidden = true }, _masterBuilder);
         EmitExpression(ctx, let.Value);
         // Store the computed value as a hidden field.
-        ctx.Builder.Emit(Opcode.PushFieldVal);
+        ctx.Builder.Emit(Opcode.StoreFieldVal);
         ctx.Builder.EmitU16(fieldId);
     }
 

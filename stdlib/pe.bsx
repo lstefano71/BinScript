@@ -1,0 +1,37 @@
+@default_endian(little)
+
+@coverage(partial)
+@root struct PeFile {
+    e_magic: u16 = 0x5A4D,
+    e_cblp: u16,
+    e_cp: u16,
+    e_crlc: u16,
+    e_cparhdr: u16,
+    e_minalloc: u16,
+    e_maxalloc: u16,
+    e_ss: u16,
+    e_sp: u16,
+    e_csum: u16,
+    e_ip: u16,
+    e_cs: u16,
+    e_lfarlc: u16,
+    e_ovno: u16,
+    e_res: bytes[8],
+    e_oemid: u16,
+    e_oeminfo: u16,
+    e_res2: bytes[20],
+    e_lfanew: u32,
+    @seek(e_lfanew)
+    pe_signature: u32 = 0x00004550,
+    coff_header: CoffHeader,
+}
+
+struct CoffHeader {
+    machine: u16,
+    number_of_sections: u16,
+    time_date_stamp: u32,
+    pointer_to_symbol_table: u32,
+    number_of_symbols: u32,
+    size_of_optional_header: u16,
+    characteristics: u16,
+}

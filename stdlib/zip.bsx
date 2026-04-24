@@ -1,0 +1,23 @@
+@default_endian(little)
+
+@coverage(partial)
+@root struct ZipFile {
+    local_header: LocalFileHeader,
+}
+
+struct LocalFileHeader {
+    signature: u32 = 0x04034B50,
+    version_needed: u16,
+    flags: u16,
+    compression: u16,
+    mod_time: u16,
+    mod_date: u16,
+    crc32: u32,
+    compressed_size: u32,
+    uncompressed_size: u32,
+    name_length: u16,
+    extra_length: u16,
+    file_name: string[name_length],
+    extra_field: bytes[extra_length],
+    data: bytes[compressed_size],
+}

@@ -1,0 +1,20 @@
+@default_endian(little)
+
+@coverage(partial)
+@root struct GifFile {
+    header: GifHeader,
+    screen: LogicalScreenDescriptor,
+}
+
+struct GifHeader {
+    signature: fixed_string[3],
+    version: fixed_string[3],
+}
+
+struct LogicalScreenDescriptor {
+    width: u16,
+    height: u16,
+    packed: u8,
+    bg_color_index: u8,
+    pixel_aspect_ratio: u8,
+}

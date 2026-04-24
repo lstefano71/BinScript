@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="BinScript.Core/BinScript.Core.csproj" />
+  <Project Path="BinScript.Emitters.Json/BinScript.Emitters.Json.csproj" />
+  <Project Path="BinScript.Interop/BinScript.Interop.csproj" />
+  <Project Path="BinScript.Tests/BinScript.Tests.csproj" />
+</Solution>

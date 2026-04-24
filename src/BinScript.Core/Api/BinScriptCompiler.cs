@@ -49,9 +49,12 @@ public sealed class BinScriptCompiler
         var semDiags = analyzer.Analyze(file, resolver);
         allDiagnostics.AddRange(semDiags);
 
-        // ── 5. Bytecode emission (future) ───────────────────────────
-        // Will be added in a later task.
+        // ── 5. Bytecode emission ────────────────────────────────────
+        if (allDiagnostics.Any(d => d.Severity == DiagnosticSeverity.Error))
+            return new CompilationResult(null, file, allDiagnostics);
 
-        return new CompilationResult(null, file, allDiagnostics);
+        var emitter = new BytecodeEmitter(file, resolver, parameters);
+        var program = emitter.Emit();
+        return new CompilationResult(program, file, allDiagnostics);
     }
 }

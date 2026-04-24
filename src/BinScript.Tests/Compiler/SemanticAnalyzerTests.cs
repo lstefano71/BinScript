@@ -401,7 +401,7 @@ public class SemanticAnalyzerTests
         var result = Compile("struct Point { x: i32, y: i32 }");
         Assert.True(result.Success);
         Assert.NotNull(result.Ast);
-        Assert.Null(result.Program); // emitter not wired yet
+        Assert.NotNull(result.Program); // emitter is now wired in
     }
 
     [Fact]

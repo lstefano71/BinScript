@@ -1,6 +1,7 @@
 namespace BinScript.Emitters.Json;
 
 using BinScript.Core.Api;
+using BinScript.Core.Interfaces;
 using BinScript.Core.Model;
 using BinScript.Core.Runtime;
 
@@ -37,5 +38,35 @@ public static class BinScriptProgramJsonExtensions
             throw new ParseException($"Parse failed: {errors}");
         }
         return emitter.GetJson();
+    }
+
+    /// <summary>Produce binary from a JSON string (convenience).</summary>
+    public static byte[] FromJson(this BinScriptProgram program, string json)
+    {
+        using var dataSource = new JsonDataSource(json);
+        var result = program.ProduceAlloc(dataSource);
+        if (!result.Success)
+        {
+            var errors = string.Join("; ", result.Diagnostics
+                .Where(d => d.Severity == DiagnosticSeverity.Error)
+                .Select(d => d.Message));
+            throw new ProduceException($"Produce failed: {errors}");
+        }
+        return result.OutputBytes!;
+    }
+
+    /// <summary>Produce binary from a JSON string using a named entry point.</summary>
+    public static byte[] FromJson(this BinScriptProgram program, string json, string entryPoint)
+    {
+        using var dataSource = new JsonDataSource(json);
+        var result = program.ProduceAlloc(dataSource, entryPoint);
+        if (!result.Success)
+        {
+            var errors = string.Join("; ", result.Diagnostics
+                .Where(d => d.Severity == DiagnosticSeverity.Error)
+                .Select(d => d.Message));
+            throw new ProduceException($"Produce failed: {errors}");
+        }
+        return result.OutputBytes!;
     }
 }

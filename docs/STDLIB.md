@@ -13,17 +13,21 @@ BinScript ships with a standard library of `.bsx` definitions for common binary 
 ### PE/COFF (`pe.bsx`)
 
 **Portable Executable** format used by Windows executables and DLLs.
+Full parse path from DOS header to PDB path via CodeView debug data.
 
 **Features exercised:**
-- Nested structs (DOS header → PE signature → COFF header → Optional header → Sections)
+- Nested structs (DosHeader → PE signature → CoffHeader → OptionalHeader → Sections)
 - `@seek(dos_header.e_lfanew)` for PE header location
-- `@let arch = coff_header.machine` for cross-struct reference
-- `enum Machine : u16` for machine types
-- `bits struct Characteristics : u16` for PE flags
-- `match(arch)` for 32-bit vs 64-bit optional header
-- `@align(file_alignment)` for section alignment
-- `@coverage(partial)` for quick-header-only mode
-- Parameterized structs: `OptionalHeader(arch)`, `Section(arch, file_alignment)`
+- `@let num_sections = coff_header.number_of_sections` for cross-struct reference
+- `@map rva_to_offset(rva, sections)` — RVA-to-file-offset conversion via `sections.find()`
+- `enum Machine : u16` for machine types (30 variants)
+- `bits struct CoffCharacteristics : u16`, `DllCharacteristics : u16`, `SectionCharacteristics : u32`
+- `match(magic)` for PE32 vs PE32+ optional header
+- `@at(rva_to_offset(...))` with `when` guards for optional data directories
+- `@until_sentinel(e => e.import_lookup_table_rva == 0)` for import table termination
+- `@max_depth(4)` on recursive `ResourceDirectory`
+- `@coverage(partial)` — covers headers, exports, imports, resources, debug; not raw section data
+- Parameterized structs: `ImportDescriptor(magic, sections)`, `ResourceDirectory(base_offset)`
 
 **Test samples:**
 - `tests/samples/pe/tiny_x64.exe` — minimal valid x64 PE
@@ -32,15 +36,26 @@ BinScript ships with a standard library of `.bsx` definitions for common binary 
 
 **Structs defined:**
 ```
-DosHeader, PeFile, CoffHeader, OptionalHeader32, OptionalHeader64,
-DataDirectory, SectionHeader, ImportDirectory, ExportDirectory,
-ResourceDirectory, Characteristics (bits), DllCharacteristics (bits),
-SectionFlags (bits)
+PeFile (root), DosHeader, CoffHeader, OptionalHeader, OptionalHeader32,
+OptionalHeader64, DataDirectory, SectionHeader, ExportDirectory,
+ImportDescriptor, ImportLookupEntry32, ImportLookupEntry64,
+ResourceDirectory, ResourceEntry, ResourceDataEntry,
+DebugDirectoryEntry, CvInfoPdb70
+```
+
+**Bits structs defined:**
+```
+CoffCharacteristics, DllCharacteristics, SectionCharacteristics
 ```
 
 **Enums defined:**
 ```
-Machine, OptionalHeaderMagic, SubSystem, DataDirectoryIndex
+Machine, Subsystem, DebugType
+```
+
+**Maps defined:**
+```
+rva_to_offset(rva: u32, sections: SectionHeader[]): u32
 ```
 
 ---
@@ -79,17 +94,17 @@ CompressionMethod
 ### PNG (`png.bsx`)
 
 **Portable Network Graphics** image format.
+Full chunk coverage with typed body structs for all common chunk types.
 
 **Features exercised:**
 - Condition-based arrays: `chunks: PngChunk[] @until(@remaining == 0)`
-- Alternative: sentinel-based: stop when chunk type is IEND
-- `match(chunk_type)` for chunk-type dispatch
-- `enum PngChunkType : fixed_string[4]`
-- `@derived` CRC-32 field using `@crc32(chunk_type, data)`
-- `@derived length` using `@sizeof(data)`
+- `match(chunk_type)` for 17 chunk-type dispatch arms
+- `enum ColorType : u8`, `InterlaceMethod : u8`, `SrgbRenderingIntent : u8`
+- Parameterized structs: `PlteBody(data_length)`, `TextBody(data_length)`, etc.
 - `fixed_string[4]` for chunk type
-- `bytes[length]` for chunk data
-- Nested IHDR, PLTE, tEXt structures
+- `bytes[length]` for raw data blobs (IDAT, eXIf)
+- CRC-32 field per chunk
+- Nested IHDR, PLTE, tEXt, zTXt, iTXt, pHYs, tIME, gAMA, cHRM, sRGB, iCCP structures
 
 **Test samples:**
 - `tests/samples/png/rgb_8x8.png` — tiny 8×8 RGB PNG
@@ -97,13 +112,14 @@ CompressionMethod
 
 **Structs defined:**
 ```
-PngFile, PngSignature, PngChunk, IhdrBody, PlteBody, PlteEntry,
-TextBody, PhysBody
+PngFile (root), PngChunk, IhdrBody, PlteBody, PaletteEntry,
+TextBody, ZtxtBody, ItxtBody, PhysBody, TimeBody, GamaBody,
+ChrmBody, SrgbBody, IccpBody
 ```
 
 **Enums defined:**
 ```
-PngChunkType, ColorType, InterlaceMethod
+ColorType, InterlaceMethod, SrgbRenderingIntent
 ```
 
 ---
@@ -111,30 +127,39 @@ PngChunkType, ColorType, InterlaceMethod
 ### ELF (`elf.bsx`)
 
 **Executable and Linkable Format** used by Linux/Unix.
+Supports both ELF32 and ELF64 via `match(ei_class)` dispatch. Covers headers,
+program headers, section headers, string tables, symbol tables, dynamic sections,
+notes, and relocations.
 
 **Features exercised:**
-- `@param bitness: u32` (compile-time parameter: 32 or 64)
-- Endian switching: `@default_endian` determined at runtime from `e_ident` byte
-- `match(bitness)` for 32-bit vs 64-bit field sizes throughout
+- `match(ident.ei_class)` for 32-bit vs 64-bit body dispatch (ELFCLASS64 listed first)
 - `@at(e_shoff)` and `@at(e_phoff)` for section/program header tables
+- `@at(section_headers[e_shstrndx].sh_offset)` for string table resolution
 - Count-based arrays from `e_shnum` and `e_phnum`
-- `fixed_string[16]` for `e_ident` magic
-- `bytes[@remaining]` for section data
+- `bits struct PhdrFlags : u32`, `ShFlags32 : u32`, `ShFlags64 : u64` for permission flags
+- `enum ElfMachine : u16` (10 variants), `PhdrType : u32`, `ShType : u32`, `DynTag : i64`
+- `@coverage(partial)` — covers all headers and metadata; not raw section contents
 
 **Test samples:**
 - `tests/samples/elf/hello_x64.elf` — minimal x64 ELF
-- `tests/samples/elf/hello_arm64.elf` — minimal ARM64 ELF (if available)
 
 **Structs defined:**
 ```
-ElfFile, ElfIdent, Elf32Header, Elf64Header, Elf32ProgramHeader,
-Elf64ProgramHeader, Elf32SectionHeader, Elf64SectionHeader
+ElfFile (root), ElfIdent, ElfBody32, ElfBody64,
+ProgramHeader32, ProgramHeader64, SectionHeader32, SectionHeader64,
+DynamicEntry32, DynamicEntry64, Symbol32, Symbol64,
+NoteEntry, Rel32, Rela32, Rel64, Rela64
+```
+
+**Bits structs defined:**
+```
+PhdrFlags, ShFlags32, ShFlags64
 ```
 
 **Enums defined:**
 ```
-ElfClass, ElfData, ElfOsAbi, ElfType, ElfMachine, ProgramHeaderType,
-SectionHeaderType
+ElfClass, ElfData, ElfOsAbi, ElfType, ElfMachine,
+PhdrType, ShType, DynTag
 ```
 
 ---
@@ -192,32 +217,104 @@ PackedScreenDescriptor (bits), PackedImageDescriptor (bits)
 GifVersion, DisposalMethod, BlockLabel
 ```
 
+---
+
+### JPG/JPEG (`jpg.bsx`)
+
+**JPEG/JFIF** image format.
+Covers SOI marker, all standard segment types, JFIF APP0, EXIF APP1, frame
+headers, Huffman/quantization tables, and comments.
+
+**Features exercised:**
+- `@default_endian(big)` — JPEG is big-endian throughout
+- `@until(s => s.marker == 0xFFD9 || s.marker == 0xFFDA)` for segment termination
+- `match(marker)` with 10 dispatch arms for marker types
+- `enum DensityUnit : u8` for JFIF density units
+- `fixed_string[5]` for JFIF identifier, `fixed_string[6]` for EXIF header
+- Parameterized length for variable-size segments: `bytes[length - 2]`
+- Count-based component arrays in SOF and SOS markers
+- `@coverage(partial)` — covers all markers/headers; not entropy-coded scan data
+
+**Test samples:**
+- *(test samples to be added)*
+
+**Structs defined:**
+```
+JpgFile (root), JpgSegment, JfifApp0, ExifApp1, SofBaseline,
+SofProgressive, FrameComponent, DhtMarker, DqtMarker, DriMarker,
+SosMarker, ScanComponent, ComMarker, GenericMarkerBody
+```
+
+**Enums defined:**
+```
+DensityUnit
+```
+
+---
+
+### Memory Examples (`memory/`)
+
+In-memory structure definitions demonstrating `ptr<T>` pointer support.
+These require `@param base_ptr: u64` at runtime.
+
+#### `c_strings.bsx` — Two-String Struct
+The canonical `{ char *s1; char *s2; }` example. Two `ptr<cstring, u64>` fields
+that dereference to nul-terminated strings. Demonstrates transparent pointer
+dereferencing and trailing data region layout.
+
+#### `linked_list.bsx` — Singly Linked List
+Recursive `struct Node { i32 value; ptr<Node, u64>? next; }`. Demonstrates
+guarded recursion via nullable `ptr<T>?` — null pointer terminates the chain.
+JSON output is nested objects with `null` leaf.
+
+#### `win32_startup.bsx` — STARTUPINFOW
+Windows `STARTUPINFOW` structure with `ptr<cstring @encoding(utf16le), u64>?`
+for wide-string fields. Exercises pointer types, nullable, encoding annotations,
+and `bits struct StartupFlags : u32`.
+
+**Features exercised (collectively):**
+- `ptr<T, u64>` — first-class pointer types
+- `ptr<T>?` — nullable pointers (null = zero)
+- `@param base_ptr: u64` — runtime base pointer
+- `@encoding(utf16le)` — wide string encoding on pointed-to type
+- `bits struct` for Windows flags
+- Guarded recursion via nullable pointer termination
+
 ## Feature Coverage Matrix
 
-| Feature | PE | ZIP | PNG | ELF | BMP | GIF |
-|---------|:--:|:---:|:---:|:---:|:---:|:---:|
-| Nested structs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `@seek` / `@at` | ✓ | ✓ | | ✓ | ✓ | |
-| `@let` cross-ref | ✓ | | | | | |
-| `@param` compile-time | | | | ✓ | | |
-| `enum` | ✓ | ✓ | ✓ | ✓ | | ✓ |
-| `bits struct` | ✓ | | | | | ✓ |
-| `match` | ✓ | | ✓ | ✓ | ✓ | ✓ |
-| `match` with guards | ✓ | | | ✓ | | |
-| Count-based arrays | ✓ | ✓ | | ✓ | | |
-| `@until` arrays | | | ✓ | | | |
-| `@until_sentinel` | | | | | | ✓ |
-| `@greedy` arrays | | | | | | |
-| `@derived` / `@crc32` | | ✓ | ✓ | | | |
-| `@align` | ✓ | | | | | |
-| `@coverage(partial)` | ✓ | | | | | |
-| `@input_size` | | ✓ | | | | |
-| `_index` | | ✓ | | | | |
-| `fixed_string` | | | ✓ | ✓ | | |
-| `cstring` | | | | | | |
-| `bytes[]` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Tier 1 flat-path | | | | | ✓ | |
-| Expressions in counts | | | | | | ✓ |
+| Feature | PE | ZIP | PNG | ELF | BMP | GIF | JPG | mem/ |
+|---------|:--:|:---:|:---:|:---:|:---:|:---:|:---:|:----:|
+| Nested structs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `@seek` / `@at` | ✓ | ✓ | | ✓ | ✓ | | | |
+| `@let` cross-ref | ✓ | | | | | | | |
+| `@param` runtime | | | | | | | | ✓ |
+| `@map` pure expr | ✓ | | | | | | | |
+| `enum` | ✓ | ✓ | ✓ | ✓ | | ✓ | ✓ | |
+| `bits struct` | ✓ | ✓ | | ✓ | | ✓ | | ✓ |
+| `match` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | |
+| `match` with guards | ✓ | | | | | | | |
+| `when` guards | ✓ | ✓ | | | | | | |
+| Count-based arrays | ✓ | ✓ | | ✓ | | | ✓ | |
+| `@until` arrays | | | ✓ | | | | ✓ | |
+| `@until_sentinel` | ✓ | | | | | ✓ | | |
+| `@greedy` arrays | | | | | | | | |
+| `@derived` / `@crc32` | | ✓ | ✓ | | | | | |
+| `@align` | | | | | | | | |
+| `@coverage(partial)` | ✓ | | ✓ | ✓ | | | ✓ | |
+| `@input_size` | | ✓ | | | | | | |
+| `_index` | | ✓ | | | | | | |
+| `fixed_string` | ✓ | | ✓ | ✓ | | | ✓ | |
+| `cstring` | ✓ | | | | | | | ✓ |
+| `bytes[]` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | |
+| `ptr<T>` | | | | | | | | ✓ |
+| `ptr<T>?` nullable | | | | | | | | ✓ |
+| `@encoding` | | | | | | | | ✓ |
+| `@max_depth` | ✓ | | | | | | | |
+| Parameterized structs | ✓ | | ✓ | | | | | |
+| Tier 1 flat-path | | | | | ✓ | | | |
+| Expressions in counts | | | | | | ✓ | | |
+| Guarded recursion | ✓ | | | | | | | ✓ |
+| `.find()` array method | ✓ | | | | | | | |
 
 ## Test Strategy
 

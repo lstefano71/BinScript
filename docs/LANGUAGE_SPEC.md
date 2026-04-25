@@ -1,6 +1,6 @@
 # BinScript Language Specification
 
-Version: 0.1 (Draft)
+Version: 0.2 (Draft)
 
 ## 1. Overview
 
@@ -55,7 +55,8 @@ String literals use double quotes. Escape sequences: `\\`, `\"`, `\n`, `\r`, `\t
 ```
 struct    bits      enum      const     match     when
 if        else      true      false     bit       bytes
-cstring   string    fixed_string
+cstring   string    fixed_string        ptr       relptr
+null
 ```
 
 ### 2.6 Directives (Annotations)
@@ -72,6 +73,8 @@ All directives start with `@`:
 @input_size     @offset             @remaining
 @sizeof         @offset_of          @count
 @strlen         @crc32              @adler32
+@map            @max_depth          @inline
+@show_ptr
 ```
 
 ## 3. Type System
@@ -130,7 +133,143 @@ data: bytes[expr]           // read exactly expr bytes
 remaining_data: bytes[@remaining]  // read all remaining bytes
 ```
 
-### 3.4 Bit Types (within `bits struct` only)
+### 3.4 Pointer Types
+
+Pointer types describe fields whose binary value is an address (or offset) pointing to data stored elsewhere in the buffer.
+
+#### `ptr<T, width>` — Absolute Pointer
+
+The pointer value is an absolute address. The engine converts between buffer offsets and absolute addresses using a base pointer provided via `@param`.
+
+```
+@param base_ptr: u64
+
+struct MyStruct {
+    name: ptr<cstring, u64>,     // 8-byte pointer to a nul-terminated string
+    data: ptr<u32[10], u32>,     // 4-byte pointer to an array of 10 u32s
+    next: ptr<Node, u64>?,       // nullable 8-byte pointer (null = 0)
+}
+```
+
+The width parameter (`u32` or `u64`) specifies the binary size of the pointer value itself. If omitted, defaults to `u64`:
+
+```
+name: ptr<cstring>,              // equivalent to ptr<cstring, u64>
+```
+
+**Parse**: Read `width` bytes → interpret as unsigned integer → subtract `base_ptr` → seek to resulting buffer offset → read inner type `T` → restore cursor.
+
+**Produce**: Lay out inner data in a trailing data region → compute pointer value as `base_ptr + data_offset` → write pointer value as `width` bytes.
+
+A script using `ptr<T>` without a `@param base_ptr` declaration produces a compile error.
+
+#### `relptr<T, width>` — Relative Pointer
+
+The pointer value is an offset relative to the pointer field's own position in the buffer. No base pointer is needed.
+
+```
+struct FlatBufferTable {
+    name_offset: relptr<cstring, u32>,   // offset from this field's position
+}
+```
+
+**Parse**: Read `width` bytes → interpret as signed integer → add to the field's own buffer offset → seek to resulting position → read inner type `T` → restore cursor.
+
+**Produce**: Compute `ptr_value = target_offset - field_offset` → write as `width` bytes.
+
+#### Nullable Pointers
+
+Appending `?` to a pointer type makes it nullable. A zero pointer value represents null:
+
+```
+next: ptr<Node, u64>?,           // null if pointer value is 0
+```
+
+**JSON representation**: `null` when the pointer is zero, otherwise the dereferenced value:
+
+```json
+{ "next": null }
+{ "next": { "value": 42, "next": null } }
+```
+
+Nullable pointers serve as recursion termination guards (see §4.5).
+
+#### JSON Representation
+
+By default, pointers are **transparently dereferenced** — the pointer value is hidden, and only the pointed-to content appears in the JSON output:
+
+```json
+{ "name": "hello", "data": [1, 2, 3] }
+```
+
+To include the raw pointer value (for debugging or forensics), use `@show_ptr`:
+
+```
+name: ptr<cstring, u64> @show_ptr,
+```
+
+Produces:
+
+```json
+{ "name": { "_ptr": 140698832470040, "value": "hello" } }
+```
+
+In produce mode with `@show_ptr`, the `_ptr` field is ignored — the engine always computes pointer values from the layout.
+
+#### Produce Layout
+
+**Trailing data region (default):** All pointer targets within a struct are appended after the struct's fixed-size fields, in field declaration order. The two-pass produce engine computes:
+
+1. **Size pass**: Total size = fixed fields + all pointed-to data sizes
+2. **Write pass**: Pointer values = `base_ptr + offset_of_data_in_trailing_region`
+
+**`@inline` annotation:** Places the pointed-to data immediately after the pointer field, rather than in a trailing region:
+
+```
+name: ptr<cstring, u64> @inline,   // data follows the pointer directly
+```
+
+This is useful for packed record streams where cache locality matters. Note that `@inline` makes the containing struct variable-sized, which moves it from Tier 1 to Tier 2 bytecode.
+
+#### Array Compositions
+
+Pointer types compose with arrays in two ways:
+
+```
+// Array of pointers — each element is a separate pointer
+items: ptr<cstring, u64>[count],
+
+// Pointer to array — single pointer to a contiguous array
+data: ptr<u32[count], u64>,
+```
+
+Both forms support all array termination strategies:
+
+```
+names: ptr<cstring, u64>[] @until(@remaining == 0),
+records: ptr<Record[] @until(r => r.type == 0), u64>,
+```
+
+### 3.5 Nullable Types
+
+Any struct or pointer type can be made nullable with the `?` suffix:
+
+```
+field: SomeStruct?,                  // may be absent
+field: ptr<T, u64>?,                 // null pointer
+```
+
+Nullable fields require a guard condition (`when`) to control when they are present during parsing:
+
+```
+@at(next_offset) when next_offset != 0 {
+    next: TiffIfd?,
+}
+```
+
+**JSON representation**: `null` when absent. In produce mode, the engine checks `IDataSource.HasField` to determine presence.
+
+### 3.6 Bit Types (within `bits struct` only)
 
 | Type | Description |
 |------|-------------|
@@ -182,6 +321,52 @@ One struct should be marked as the default entry point:
 ```
 
 The caller can override the entry point at parse time.
+
+#### Recursive Structs (Guarded Recursion)
+
+Structs may reference themselves (directly or mutually) provided every recursive path passes through a **termination guard**. Valid guards are:
+
+- `when condition` on an `@at` block or field
+- A non-default `match` arm
+- A nullable pointer `ptr<T>?` or nullable field `T?`
+
+```
+struct TiffIfd {
+    entry_count: u16be,
+    entries: IfdEntry[entry_count],
+    next_offset: u32be,
+    @at(next_offset) when next_offset != 0 {
+        next: TiffIfd,               // guarded by 'when'
+    },
+}
+
+struct LinkedNode {
+    value: u32,
+    next: ptr<LinkedNode, u64>?,     // guarded by nullable '?'
+}
+```
+
+The compiler performs cycle detection on the struct reference graph. Any cycle without a guard on every edge produces a compile error:
+
+```
+Error E030: Recursive reference from A → B → A has no termination guard.
+            Add a 'when' condition, match arm, or nullable 'ptr<T>?'.
+```
+
+#### `@max_depth(N)` — Recursion Depth Limit
+
+An optional annotation that limits the maximum recursion depth for a struct:
+
+```
+struct ResourceDirectory @max_depth(4) {
+    ...
+    entries: ResourceEntry[count],   // ResourceEntry may recurse back
+}
+```
+
+If not specified, a default runtime depth limit of 256 applies. When the limit is reached, the engine produces a runtime error.
+
+In produce mode, recursion depth is determined by the data source (JSON nesting), not by guard expressions.
 
 ### 4.2 Bits Struct
 
@@ -242,6 +427,38 @@ Standalone named values for use in expressions:
 const PE_MAGIC = 0x00004550;
 const DOS_MAGIC = 0x5A4D;
 ```
+
+### 4.5 Map Declarations
+
+`@map` declarations define **named pure expressions** that can be reused at multiple call sites. They are compile-time inlined — the compiler substitutes the body at each call site, so there is no runtime function call overhead.
+
+```
+@map name(param1: type1, param2: type2, ...): return_type = expression
+```
+
+#### Example — PE RVA Resolution
+
+```
+@map rva_to_offset(rva: u64, sections: SectionHeader[]): u64 = {
+    @let s = sections.find(s => rva >= s.virtual_address
+                              && rva < s.virtual_address + s.virtual_size),
+    s.pointer_to_raw_data + (rva - s.virtual_address)
+}
+
+// Usage:
+@at(rva_to_offset(import_rva, sections)) {
+    import_dir: ImportDirectory,
+}
+```
+
+#### Constraints
+
+- **Pure**: Bodies consist only of `@let` bindings and a final expression. No side effects, no field reads, no `@seek`/`@at`, no emitter calls.
+- **No recursion**: A `@map` cannot reference itself or form cycles with other `@map` declarations. The compiler detects and rejects such cycles.
+- **Type-checked**: All parameters and the return type are verified at compile time.
+- **Bidirectional**: `@map` expressions work identically in both parse and produce directions since they are pure computations.
+
+See [ADR-001](adr/ADR-001-map-pure-expressions.md) for design rationale.
 
 ## 5. Field Modifiers & Directives
 
@@ -408,6 +625,32 @@ local_files: @at(central_dir[_index].local_header_offset)
              LocalFileEntry[eocd.total_entries],
 ```
 
+### 6.6 Array Methods
+
+Previously parsed arrays support search methods in expressions. These methods iterate the array and return a single value — they do NOT return new arrays.
+
+| Method | Return Type | Description |
+|--------|-------------|-------------|
+| `array.find(e => pred)` | element | First element where `pred` is true. Runtime error if none found. |
+| `array.find_or(e => pred, default)` | element | First matching element, or `default` if none found. |
+| `array.any(e => pred)` | `bool` | True if any element matches. |
+| `array.all(e => pred)` | `bool` | True if all elements match. |
+
+Predicates are lambda expressions with a single parameter. The parameter has access to all fields of the array element type:
+
+```
+@let debug_section = sections.find(s =>
+    debug_rva >= s.virtual_address &&
+    debug_rva < s.virtual_address + s.virtual_size
+),
+
+has_code: bool = sections.any(s => s.characteristics & 0x20 != 0),
+```
+
+Array methods work in both parse and produce directions:
+- **Parse**: iterates the in-memory parsed array
+- **Produce**: iterates the data source array (e.g., JSON input)
+
 ## 7. Match Expressions (Tagged Unions)
 
 Match selects a type based on a discriminant value:
@@ -536,6 +779,19 @@ The engine reads field values from the active `IDataSource` and writes bytes int
 - **`match` fields**: The `_variant` discriminator in the input data selects the arm.
 - **Enum fields**: Both the name (string) and raw value (numeric) are accepted.
 - **`@seek`/`@at`**: The engine writes at the specified offsets, leaving gaps filled with zeros (or as specified).
+- **`ptr<T>` fields**: The engine lays out pointed-to data in a trailing data region (or inline if `@inline` is annotated), computes pointer values as `base_ptr + data_offset`, and writes them. The data source provides the dereferenced values directly (e.g., `"s1": "hello"`), not pointer addresses.
+- **Nullable fields (`T?`, `ptr<T>?`)**: The engine checks `IDataSource.HasField` to determine if the field is present. If absent or null, writes a zero/null value and does not recurse.
+- **Recursive structs**: Recursion depth in produce mode is governed by the data source nesting (JSON depth), not by guard expressions. The `@max_depth` limit still applies as a safety net.
+
+### 11.3 Round-Trip Fidelity
+
+BinScript guarantees **semantic** round-trip fidelity:
+
+```
+parse(produce(parse(data))) == parse(data)
+```
+
+The binary output of `produce` may differ from the original binary input (e.g., pointer layouts may be canonicalized to trailing order, padding may differ), but the structured representation is preserved.
 
 ## 12. File Structure
 
@@ -587,6 +843,8 @@ struct FooterBody { ... }
 ## 13. Reserved for Future Specification
 
 - Streaming parse/produce semantics
-- User-defined functions
 - Conditional compilation (`@if`)
 - Bitwise field ordering options (MSB-first vs LSB-first)
+- Circular structure support (graphs with cycles) — see [ADR-002](adr/ADR-002-circular-structures-deferred.md)
+- `@max_visits` annotation for graph-mode parsing
+- User-defined functions (if `@map` proves insufficient)

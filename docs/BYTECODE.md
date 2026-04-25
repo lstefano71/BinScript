@@ -170,6 +170,19 @@ These instructions handle flat, sequential struct reads with no control flow. A 
 | `ARRAY_BEGIN_GREEDY` | 0xD3 | — | Begin greedy array |
 | `ARRAY_NEXT` | 0xD4 | — | Advance to next element |
 | `ARRAY_END` | 0xD5 | — | End array loop |
+| `ARRAY_FIND` | 0xD6 | pred_offset:i32 | Iterate array, eval predicate, push first match |
+| `ARRAY_FIND_OR` | 0xD7 | pred_offset:i32 | Same, with default value on stack |
+| `ARRAY_ANY` | 0xD8 | pred_offset:i32 | Iterate array, push bool (any match) |
+| `ARRAY_ALL` | 0xD9 | pred_offset:i32 | Iterate array, push bool (all match) |
+| **Pointer operations** | | | |
+| `READ_PTR` | 0x74 | field_id:u16, width:u8, mode:u8 | Read pointer value, compute buffer offset. width: 4=u32, 8=u64. mode: 0=absolute, 1=relative |
+| `DEREF_BEGIN` | 0x75 | — | Push current position, seek to dereferenced offset (top of stack) |
+| `DEREF_END` | 0x76 | — | Pop position stack, restore cursor |
+| `WRITE_PTR` | 0x77 | field_id:u16, width:u8, mode:u8 | Produce: write computed pointer value (base + data offset) |
+| `NULL_CHECK` | 0x7A | — | Pop value, push bool (true if zero/null) |
+| **Recursion control** | | | |
+| `DEPTH_CHECK` | 0x78 | struct_id:u16, max_depth:u16 | Increment depth counter for struct, error if > max_depth |
+| `DEPTH_POP` | 0x79 | struct_id:u16 | Decrement depth counter for struct |
 | **Match** | | | |
 | `MATCH_BEGIN` | 0xE0 | arm_count:u16 | Begin match, discriminant on stack |
 | `MATCH_ARM_EQ` | 0xE1 | value:i64, jump:i32 | If discriminant == value, jump |
@@ -189,11 +202,14 @@ The VM has no general-purpose registers. Instead it maintains:
 
 - **Evaluation stack**: arbitrary depth, holds `i64`, `u64`, `f64`, `string`, `bool` values
 - **Position cursor**: current byte offset in the input buffer (`u64`)
-- **Position stack**: for `SEEK_PUSH` / `SEEK_POP` (implements `@at`)
+- **Position stack**: for `SEEK_PUSH` / `SEEK_POP` / `DEREF_BEGIN` / `DEREF_END` (implements `@at` and pointer dereferencing)
 - **Field value table**: indexed by `field_id`, stores parsed values for back-references
 - **Parameter stack**: for nested struct calls with parameters
 - **Array index**: current `_index` value (stack of indices for nested arrays)
 - **Bit accumulator**: for bit-level reads within `bits struct` (byte value + bit position)
+- **Depth counters**: per-struct recursion depth tracking, indexed by `struct_id` (for `DEPTH_CHECK` / `DEPTH_POP`)
+- **Base pointer**: the `base_ptr` parameter value, used by `READ_PTR` / `WRITE_PTR` for absolute pointer address computation
+- **Data region cursor** (produce only): tracks the next available offset in the trailing data region for pointer target placement
 
 ### 4.2 Tier 1 Execution
 

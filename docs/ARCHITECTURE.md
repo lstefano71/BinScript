@@ -298,9 +298,11 @@ Validates the AST:
 - Name resolution: all referenced fields, structs, enums, constants are defined
 - Import resolution: all `@import` modules are resolved via `IModuleResolver`
 - Parameter validation: struct parameters match call sites
-- Cycle detection: no circular struct references (direct recursion is not supported in v1)
+- Recursion analysis: builds the struct reference graph, detects cycles via SCC (strongly connected components). Cycles are allowed only if every edge in the cycle passes through a termination guard (`when`, non-default `match` arm, or nullable `?`). Unguarded cycles produce error E030.
 - `@root` validation: exactly one root struct (or zero, if caller always specifies entry point)
 - `@derived` validation: expression references only fields that precede this field in the struct
+- `@map` validation: bodies are pure expressions (no side effects, no self-references, no cycles between maps)
+- Pointer validation: `ptr<T>` fields require `@param base_ptr` in scope; inner type `T` must be a valid field type
 
 ### 4.4 Bytecode Emitter
 
@@ -331,10 +333,31 @@ Executes bytecode against a `ReadOnlySpan<byte>` input buffer, calling `IResultE
 Reads from `IDataSource` and writes into a `Span<byte>` output buffer.
 
 **Two-pass architecture:**
-1. **Size pass**: Walk the data source and bytecode to calculate the total output size and the offset of every field. This pass doesn't write any bytes.
-2. **Write pass**: Walk again, writing bytes at the calculated offsets. `@derived` fields are computed during this pass.
+1. **Size pass**: Walk the data source and bytecode to calculate the total output size and the offset of every field. This pass doesn't write any bytes. For `ptr<T>` fields, the size pass also computes the data region layout — where each pointed-to value will be placed.
+2. **Write pass**: Walk again, writing bytes at the calculated offsets. `@derived` fields are computed during this pass. Pointer values are written as `base_ptr + data_offset` (absolute) or `target_offset - field_offset` (relative).
 
 For Tier 1 (fixed-size) structs, the compiler statically knows the size, so the size pass is skipped.
+
+#### Pointer Data Region Layout
+
+When a struct contains `ptr<T>` fields, the produce engine manages a **trailing data region** after the struct's fixed-size fields. During the size pass:
+
+1. Compute the fixed-size portion of the struct (all non-`@inline` pointer widths + other fields).
+2. For each `ptr<T>` field (in declaration order), compute the size of the pointed-to data and append it to the data region.
+3. Total struct size = fixed portion + data region size.
+
+During the write pass:
+- Pointer field slots receive computed pointer values (`base_ptr + data_region_start + field_data_offset`).
+- The data region is filled with the serialized pointed-to values.
+
+For `@inline` pointers, the pointed-to data is placed immediately after the pointer field instead of in the trailing region. This makes the struct variable-sized and may affect layout of subsequent fields.
+
+#### Recursive Produce
+
+For recursive structs (e.g., linked lists, IFD chains), the produce engine recurses into the data source tree. The `@max_depth` limit applies as a safety net. Recursion terminates when:
+- A nullable field is null in the data source
+- The data source has no value for the recursive field
+- The depth limit is reached
 
 ### 5.3 Expression Evaluator
 
@@ -346,6 +369,13 @@ A stack-based evaluator for bytecode expressions. Supports:
 - Field value lookup (from the parse context)
 - Built-in function calls (`@sizeof`, `@crc32`, etc.)
 - String method calls (`.starts_with()`, etc.)
+- Array search methods (`.find()`, `.any()`, `.all()`) via linear scan with predicate evaluation
+
+### 5.4 Recursion Depth Tracking
+
+For structs involved in recursive reference cycles (detected by the compiler via SCC analysis), the runtime maintains per-struct depth counters in the `ParseContext` / `ProduceContext`. The `DEPTH_CHECK` opcode increments the counter and raises a runtime error if the limit is exceeded. `DEPTH_POP` decrements it on return.
+
+The default limit is 256. Scripts can override this with `@max_depth(N)` on the struct declaration, which the compiler encodes into the `DEPTH_CHECK` operand.
 
 ## 6. Thread Safety Model
 
@@ -425,6 +455,10 @@ See [C-ABI Reference](C_ABI.md) for the complete function list.
 | `IResultEmitter` / `IDataSource` interfaces | Decouples the engine from any specific serialization format |
 | `@let` for cross-branch refs | Makes data flow explicit; avoids implicit global scope |
 | `@at` block scoping | Makes seek-and-return explicit; prevents cursor state confusion |
-| Fixed built-in functions, no UDFs | Keeps the language simple and fully compilable |
+| `@map` instead of UDFs | Compile-time inlined pure expressions — reusable without Turing-completeness. See [ADR-001](adr/ADR-001-map-pure-expressions.md) |
+| `ptr<T>` transparent deref | Hides pointer mechanics from JSON output; pointer values are computed, not user-provided |
+| Trailing data region for produce | Natural C-like layout; `@inline` opt-in for cache-friendly alternatives. See [ADR-003](adr/ADR-003-pointer-extension.md) |
+| Guarded recursion, not unlimited | Compiler verifies termination guards; runtime depth limit as safety net |
+| Circular structures deferred | JSON can't represent cycles; real binary formats are acyclic. See [ADR-002](adr/ADR-002-circular-structures-deferred.md) |
 | Enums in JSON as names | Readable output; both name and numeric accepted on input |
 | `_variant` tag for match | Explicit discrimination avoids fragile inference in produce mode |

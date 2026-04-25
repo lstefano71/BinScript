@@ -1,0 +1,21 @@
+@default_endian(little)
+
+// In-memory singly linked list: struct Node { int value; struct Node *next; }
+// Demonstrates guarded recursion via nullable ptr<T>?.
+//
+// Parse: follows the pointer chain until next == NULL (0),
+//        emitting nested JSON:
+//        { "value": 42, "next": { "value": 17, "next": null } }
+//
+// Produce: rebuilds the linked list in a buffer with computed pointers.
+
+@param base_ptr: u64
+
+@root struct LinkedList {
+    head: ptr<Node, u64>?,
+}
+
+struct Node {
+    value: i32,
+    next: ptr<Node, u64>?,
+}

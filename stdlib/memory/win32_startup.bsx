@@ -1,0 +1,44 @@
+@default_endian(little)
+
+// Windows STARTUPINFOW structure (64-bit)
+// Demonstrates ptr<T> with wide string encoding.
+//
+// STARTUPINFOW contains LPWSTR (pointer to wide nul-terminated string) fields.
+// The actual strings are stored elsewhere in the buffer, pointed to by each field.
+//
+// Reference: https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/ns-processthreadsapi-startupinfow
+
+@param base_ptr: u64
+
+@root struct StartupInfoW {
+    cb: u32,
+    _reserved1: ptr<cstring @encoding(utf16le), u64>?,
+    desktop: ptr<cstring @encoding(utf16le), u64>?,
+    title: ptr<cstring @encoding(utf16le), u64>?,
+    dw_x: u32,
+    dw_y: u32,
+    dw_x_size: u32,
+    dw_y_size: u32,
+    dw_x_count_chars: u32,
+    dw_y_count_chars: u32,
+    dw_fill_attribute: u32,
+    dw_flags: StartupFlags,
+    w_show_window: u16,
+    cb_reserved2: u16,
+    _reserved2: ptr<bytes[cb_reserved2], u64>?,
+    h_std_input: u64,
+    h_std_output: u64,
+    h_std_error: u64,
+}
+
+bits struct StartupFlags : u32 {
+    use_show_window: bit,
+    use_size: bit,
+    use_position: bit,
+    use_count_chars: bit,
+    use_fill_attribute: bit,
+    force_on_feedback: bit,
+    force_off_feedback: bit,
+    use_std_handles: bit,
+    _reserved: bits[24],
+}

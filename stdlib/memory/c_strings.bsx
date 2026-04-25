@@ -1,0 +1,18 @@
+@default_endian(little)
+
+// In-memory C struct: { char *s1; char *s2; }
+// Demonstrates bidirectional ptr<T> with absolute pointers.
+//
+// Parse: reads two 64-bit pointers, dereferences each to read a
+//        nul-terminated string, emits { "s1": "...", "s2": "..." }
+//
+// Produce: given { "s1": "hello", "s2": "world" }, outputs:
+//   [ptr_to_s1][ptr_to_s2][hello\0][world\0]
+//   where ptr values = base_ptr + offset of each string in the buffer.
+
+@param base_ptr: u64
+
+@root struct TwoStrings {
+    s1: ptr<cstring, u64>,
+    s2: ptr<cstring, u64>,
+}

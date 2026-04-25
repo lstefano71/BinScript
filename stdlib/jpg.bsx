@@ -1,0 +1,133 @@
+@default_endian(big)
+
+@coverage(partial)
+
+// JPEG/JFIF file format
+// Covers: SOI, JFIF APP0, EXIF APP1, SOF, DHT, DQT, DRI, SOS, COM markers
+
+@root struct JpgFile {
+    soi: u16 = 0xFFD8,
+    segments: JpgSegment[] @until(s => s.marker == 0xFFD9 || s.marker == 0xFFDA),
+}
+
+struct JpgSegment {
+    marker: u16,
+    body: match(marker) {
+        0xFFE0 => JfifApp0,
+        0xFFE1 => ExifApp1,
+        0xFFC0 => SofBaseline,
+        0xFFC2 => SofProgressive,
+        0xFFC4 => DhtMarker,
+        0xFFDB => DqtMarker,
+        0xFFDD => DriMarker,
+        0xFFDA => SosMarker,
+        0xFFFE => ComMarker,
+        _ => GenericMarkerBody,
+    },
+}
+
+// ─── JFIF APP0 ───
+
+struct JfifApp0 {
+    length: u16,
+    identifier: fixed_string[5],
+    version_major: u8,
+    version_minor: u8,
+    density_units: DensityUnit,
+    x_density: u16,
+    y_density: u16,
+    thumb_width: u8,
+    thumb_height: u8,
+    thumbnail: bytes[thumb_width * thumb_height * 3],
+}
+
+enum DensityUnit : u8 {
+    NoUnits        = 0,
+    PixelsPerInch  = 1,
+    PixelsPerCm    = 2,
+}
+
+// ─── EXIF APP1 ───
+
+struct ExifApp1 {
+    length: u16,
+    exif_header: fixed_string[6],
+    exif_data: bytes[length - 8],
+}
+
+// ─── Start of Frame (SOF0 — Baseline DCT) ───
+
+struct SofBaseline {
+    length: u16,
+    precision: u8,
+    image_height: u16,
+    image_width: u16,
+    num_components: u8,
+    components: FrameComponent[num_components],
+}
+
+struct SofProgressive {
+    length: u16,
+    precision: u8,
+    image_height: u16,
+    image_width: u16,
+    num_components: u8,
+    components: FrameComponent[num_components],
+}
+
+struct FrameComponent {
+    component_id: u8,
+    sampling_factors: u8,
+    quantization_table_id: u8,
+}
+
+// ─── Define Huffman Table (DHT) ───
+
+struct DhtMarker {
+    length: u16,
+    data: bytes[length - 2],
+}
+
+// ─── Define Quantization Table (DQT) ───
+
+struct DqtMarker {
+    length: u16,
+    data: bytes[length - 2],
+}
+
+// ─── Define Restart Interval (DRI) ───
+
+struct DriMarker {
+    length: u16,
+    restart_interval: u16,
+}
+
+// ─── Start of Scan (SOS) ───
+
+struct SosMarker {
+    length: u16,
+    num_components: u8,
+    components: ScanComponent[num_components],
+    spectral_start: u8,
+    spectral_end: u8,
+    successive_approx: u8,
+}
+
+struct ScanComponent {
+    component_selector: u8,
+    dc_ac_table_selector: u8,
+}
+
+// ─── Comment (COM) ───
+
+struct ComMarker {
+    length: u16,
+    comment: string[length - 2],
+}
+
+// ─── Generic marker body (unknown markers) ───
+
+struct GenericMarkerBody {
+    length: u16,
+    data: bytes[length - 2],
+}

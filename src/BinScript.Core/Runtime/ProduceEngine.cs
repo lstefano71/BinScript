@@ -296,6 +296,21 @@ public sealed class ProduceEngine
                 { long a = ctx.Pop().AsLong(); if (a > 0) { long r = ctx.Position % a; if (r != 0) ctx.Position += a - r; } break; }
                 case Opcode.AlignFixed:
                 { ushort a = ReadU16(bytecode, ref ip); if (a > 0) { long r = ctx.Position % a; if (r != 0) ctx.Position += a - r; } break; }
+
+                // Parse-only opcodes: skip operands without execution.
+                case Opcode.CopyChildField: ip += 4; break;
+                case Opcode.ExtractArrayElemField: ip += 8; break;
+                case Opcode.ForwardArrayStore or Opcode.ForwardParamArrayStore: ip += 4; break;
+                case Opcode.ArrayStoreElem: ip += 2; break;
+                case Opcode.ArraySearchBegin or Opcode.ArraySearchBeginParam: ip += 3; break;
+                case Opcode.PushElemField: ip += 2; break;
+                case Opcode.ArraySearchCheck: ip += 8; break;
+                case Opcode.ArraySearchCopy: ip += 4; break;
+                case Opcode.ArraySearchEnd: break;
+                case Opcode.SentinelSave or Opcode.SentinelCheck: break;
+                case Opcode.EmitNull: ip += 2; break;
+                case Opcode.ReadPtrU32 or Opcode.ReadPtrU64: ip += 2; break;
+
                 default: throw new ProduceException($"Unknown opcode 0x{(byte)opcode:X2} at ip={ip - 1}.");
             }
         }
@@ -624,6 +639,21 @@ public sealed class ProduceEngine
                 case Opcode.AlignFixed:
                 { ushort a = ReadU16(bytecode, ref ip); if (a > 0) { long r = ctx.Position % a;
                   if (r != 0) { int pad = (int)(a - r); output.Slice((int)ctx.Position, pad).Clear(); ctx.Position += pad; } } break; }
+
+                // Parse-only opcodes: skip operands without execution.
+                case Opcode.CopyChildField: ip += 4; break;
+                case Opcode.ExtractArrayElemField: ip += 8; break;
+                case Opcode.ForwardArrayStore or Opcode.ForwardParamArrayStore: ip += 4; break;
+                case Opcode.ArrayStoreElem: ip += 2; break;
+                case Opcode.ArraySearchBegin or Opcode.ArraySearchBeginParam: ip += 3; break;
+                case Opcode.PushElemField: ip += 2; break;
+                case Opcode.ArraySearchCheck: ip += 8; break;
+                case Opcode.ArraySearchCopy: ip += 4; break;
+                case Opcode.ArraySearchEnd: break;
+                case Opcode.SentinelSave or Opcode.SentinelCheck: break;
+                case Opcode.EmitNull: ip += 2; break;
+                case Opcode.ReadPtrU32 or Opcode.ReadPtrU64: ip += 2; break;
+
                 default: throw new ProduceException($"Unknown opcode 0x{(byte)opcode:X2} at ip={ip - 1}.");
             }
         }

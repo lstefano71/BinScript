@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-04-25
+
+### Added
+- **Constant-index array element access** (`array[i].field`) — Expressions like `data_directories[6].virtual_address` now work correctly in `@let` bindings, `@at` offsets, `when` guards, and array count expressions. Previously, `FlattenFieldPath` returned `"?"` for `IndexAccessExpr` nodes, causing all hidden-field pre-allocation and resolution to fail silently (values evaluated to 0).
+- **New opcode `EXTRACT_ARRAY_ELEM_FIELD` (0x7B)** — After an array loop completes, extracts a named field from a specific element's `ArrayElementStore` into a hidden field. Operands: `array_field_id:u16, elem_index:u16, elem_field_name_idx:u16, dst_field_id:u16`.
+- **Cross-struct suffix propagation pre-pass** (`PropagateIndexedPaths`) — Global pre-pass before struct emission that decomposes cross-struct dotted paths (including indexed paths) into per-struct suffixes and injects them into child structs. Handles multi-level nesting via fixpoint iteration, and resolves `match` type arms to propagate to all possible target structs.
+- 7 new tests covering: same-struct `@let` binding, index 0 and last index, multiple indices from same array, cross-struct `@at`/`when` guard (true and false cases), two-level cross-struct nesting, and access through `match`-typed fields.
+- **BSC303 warning: indexed access through match arms** — The semantic analyzer now emits a compile-time warning when `array[i].field` accesses a field that only exists in some (not all) match arm structs of the element type. The field may be absent at runtime depending on which arm was taken. 4 new semantic analyzer tests cover: warning fires for partial-arm field, no warning for direct fields, no warning for field present in all arms.
+
+### Fixed
+- **PE parsing now extracts all `@at` blocks** — `debug_directory` (with PDB path), `export_directory`, `import_directory`, and `resource_directory` are now correctly parsed from PE executables. The root cause was that `optional_header.data_directories[6].virtual_address` (and similar indexed paths) silently evaluated to 0, making all `when` guards false.
+
 ## 2025-07-23
 
 ### Added

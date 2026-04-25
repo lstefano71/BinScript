@@ -144,6 +144,8 @@ These instructions handle flat, sequential struct reads with no control flow. A 
 | `FORWARD_ARRAY_STORE` | 0x78 | field_id:u16, dst_param_idx:u16 | Forward a field's stored array elements as a struct call parameter |
 | `FORWARD_PARAM_ARRAY_STORE` | 0x79 | src_param_idx:u16, dst_param_idx:u16 | Forward a received param's array store to another struct call parameter |
 | `ARRAY_SEARCH_BEGIN_PARAM` | 0x7A | param_idx:u16, mode:u8 | Begin search over array received via parameter. Same modes as `ARRAY_SEARCH_BEGIN` |
+| **Array element extraction** | | | |
+| `EXTRACT_ARRAY_ELEM_FIELD` | 0x7B | array_field_id:u16, elem_index:u16, elem_field_name_idx:u16, dst_field_id:u16 | After an array loop, extract a field from a specific element and store in a hidden field. Used for constant-index array access (`array[6].field`). Requires `ARRAY_STORE_ELEM` during the loop |
 | **Expression VM** | | | |
 | `PUSH_CONST_I64` | 0x80 | value:i64 | Push integer constant |
 | `PUSH_CONST_F64` | 0x81 | value:f64 | Push float constant |
@@ -222,6 +224,7 @@ Most opcodes are supported by both `ParseEngine` and `ProduceEngine`. The follow
 - Array search opcodes (0xD6–0xDB): `ARRAY_STORE_ELEM`, `ARRAY_SEARCH_BEGIN`, `PUSH_ELEM_FIELD`, `ARRAY_SEARCH_CHECK`, `ARRAY_SEARCH_COPY`, `ARRAY_SEARCH_END`
 - Sentinel opcodes (0xDC–0xDD): `SENTINEL_SAVE`, `SENTINEL_CHECK`
 - Array store forwarding (0x78–0x7A): `FORWARD_ARRAY_STORE`, `FORWARD_PARAM_ARRAY_STORE`, `ARRAY_SEARCH_BEGIN_PARAM`
+- Array element extraction (0x7B): `EXTRACT_ARRAY_ELEM_FIELD`
 
 ## 4. Execution Model
 
@@ -277,7 +280,7 @@ The file format version (in the header) allows forward compatibility:
 - New opcodes can be added in minor version bumps (loaders skip unknown opcodes with known sizes).
 - Structural changes to the file format require a major version bump.
 
-> **Note:** During early development (pre-1.0), opcode assignments at 0x74–0x7A and 0xD6–0xDD were reassigned without a version bump. Bytecode files persisted before this change are incompatible with the current runtime. Since there are no external users yet, this is acceptable — see project instructions on backward compatibility.
+> **Note:** During early development (pre-1.0), opcode assignments at 0x74–0x7B and 0xD6–0xDD were reassigned without a version bump. Bytecode files persisted before this change are incompatible with the current runtime. Since there are no external users yet, this is acceptable — see project instructions on backward compatibility.
 
 ## 6. Design Notes
 

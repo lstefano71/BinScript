@@ -1897,4 +1897,213 @@ struct Section {
         Assert.False(doc.RootElement.TryGetProperty("area", out _),
             "@derived @hidden field should not appear in output");
     }
+
+
+    // ─── Array element indexing ───────────────────────────────────────
+
+    [Fact]
+    public void ArrayElemIndex_SameStruct_LetBinding()
+    {
+        // Verify extraction: @let computes array size from indexed field
+        var program = Compile("""
+            @default_endian(little)
+            struct Entry {
+                value: u16,
+                size: u16,
+            }
+            @root struct Root {
+                entries: Entry[3],
+                @let count = entries[1].value,
+                payload: u8[count],
+            }
+            """);
+
+        byte[] data = [
+            10, 0, 20, 0,   // entries[0]: value=10, size=20
+             3, 0, 40, 0,   // entries[1]: value=3, size=40
+            50, 0, 60, 0,   // entries[2]: value=50, size=60
+            0xAA, 0xBB, 0xCC,  // payload: 3 bytes (count = entries[1].value = 3)
+        ];
+        var json = ParseToJson(program, data);
+        using var doc = JsonDocument.Parse(json);
+        // Verify payload has exactly 3 elements, proving entries[1].value = 3 was extracted
+        var payload = doc.RootElement.GetProperty("payload");
+        Assert.Equal(3, payload.GetArrayLength());
+    }
+
+    [Fact]
+    public void ArrayElemIndex_Index0_And_LastIndex()
+    {
+        // Verify index 0 and the last element both work
+        var program = Compile("""
+            @default_endian(little)
+            struct Entry { value: u16 }
+            @root struct Root {
+                entries: Entry[4],
+                @let first = entries[0].value,
+                @let last = entries[3].value,
+                a: u8[first],
+                b: u8[last],
+            }
+            """);
+
+        byte[] data = [
+            2, 0,  // entries[0].value = 2
+            0, 0,  // entries[1]
+            0, 0,  // entries[2]
+            3, 0,  // entries[3].value = 3
+            0xAA, 0xBB,  // a: 2 bytes
+            0xCC, 0xDD, 0xEE,  // b: 3 bytes
+        ];
+        var json = ParseToJson(program, data);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal(2, doc.RootElement.GetProperty("a").GetArrayLength());
+        Assert.Equal(3, doc.RootElement.GetProperty("b").GetArrayLength());
+    }
+
+    [Fact]
+    public void ArrayElemIndex_MultipleIndices_SameArray()
+    {
+        // Multiple constant indices from the same array used in a computation
+        var program = Compile("""
+            @default_endian(little)
+            struct Item { a: u8, b: u8 }
+            @root struct Root {
+                items: Item[4],
+                @let total = items[0].a + items[2].b,
+                data: u8[total],
+            }
+            """);
+
+        byte[] data = [
+            3, 0x11,  // items[0]: a=3, b=0x11
+            0, 0,     // items[1]
+            0, 5,     // items[2]: a=0, b=5
+            0, 0,     // items[3]
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,  // data: 8 bytes (3+5)
+        ];
+        var json = ParseToJson(program, data);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal(8, doc.RootElement.GetProperty("data").GetArrayLength());
+    }
+
+    [Fact]
+    public void ArrayElemIndex_CrossStruct_AtWhenGuard()
+    {
+        // Mimics PE pattern: parent accesses child_struct.array[i].field in @at guard
+        var program = Compile("""
+            @default_endian(little)
+            struct DataDir {
+                rva: u32,
+                size: u32,
+            }
+            struct Header {
+                dirs: DataDir[3],
+            }
+            @root struct Root {
+                header: Header,
+                @at(header.dirs[1].rva) when header.dirs[1].rva != 0 && header.dirs[1].size != 0 {
+                    payload: u32,
+                },
+            }
+            """);
+
+        // header.dirs[0] = (0, 0), dirs[1] = (rva=24, size=4), dirs[2] = (0, 0)
+        // At offset 24: payload = 0xDEADBEEF
+        byte[] data = new byte[28];
+        BinaryPrimitives.WriteUInt32LittleEndian(data.AsSpan(0), 0);    // dirs[0].rva
+        BinaryPrimitives.WriteUInt32LittleEndian(data.AsSpan(4), 0);    // dirs[0].size
+        BinaryPrimitives.WriteUInt32LittleEndian(data.AsSpan(8), 24);   // dirs[1].rva
+        BinaryPrimitives.WriteUInt32LittleEndian(data.AsSpan(12), 4);   // dirs[1].size
+        BinaryPrimitives.WriteUInt32LittleEndian(data.AsSpan(16), 0);   // dirs[2].rva
+        BinaryPrimitives.WriteUInt32LittleEndian(data.AsSpan(20), 0);   // dirs[2].size
+        BinaryPrimitives.WriteUInt32LittleEndian(data.AsSpan(24), 0xDEADBEEF); // payload
+        var json = ParseToJson(program, data);
+        using var doc = JsonDocument.Parse(json);
+        Assert.True(doc.RootElement.TryGetProperty("payload", out var payloadProp),
+            "payload should be present because dirs[1].rva != 0");
+        Assert.Equal(unchecked((long)0xDEADBEEF), payloadProp.GetInt64());
+    }
+
+    [Fact]
+    public void ArrayElemIndex_CrossStruct_WhenGuardFalse_SkipsBlock()
+    {
+        // When all indexed values are 0, the @at block should be skipped
+        var program = Compile("""
+            @default_endian(little)
+            struct DataDir {
+                rva: u32,
+                size: u32,
+            }
+            struct Header {
+                dirs: DataDir[3],
+            }
+            @root struct Root {
+                header: Header,
+                @at(header.dirs[1].rva) when header.dirs[1].rva != 0 && header.dirs[1].size != 0 {
+                    payload: u32,
+                },
+            }
+            """);
+
+        // All dirs are zero -> when guard should be false -> payload absent
+        byte[] data = new byte[24]; // all zeros
+        var json = ParseToJson(program, data);
+        using var doc = JsonDocument.Parse(json);
+        Assert.False(doc.RootElement.TryGetProperty("payload", out _),
+            "payload should NOT be present when dirs[1].rva == 0");
+    }
+
+    [Fact]
+    public void ArrayElemIndex_CrossStruct_TwoLevels()
+    {
+        // Two levels of cross-struct: Root -> Middle -> Inner (has array)
+        var program = Compile("""
+            @default_endian(little)
+            struct Item { value: u16 }
+            struct Inner { items: Item[3] }
+            struct Middle { inner: Inner }
+            @root struct Root {
+                mid: Middle,
+                @let picked = mid.inner.items[2].value,
+                data: u8[picked],
+            }
+            """);
+
+        // items[0]=1, items[1]=2, items[2]=4
+        byte[] data = [0x01, 0x00, 0x02, 0x00, 0x04, 0x00, 0xAA, 0xBB, 0xCC, 0xDD];
+        var json = ParseToJson(program, data);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal(4, doc.RootElement.GetProperty("data").GetArrayLength());
+    }
+
+    [Fact]
+    public void ArrayElemIndex_CrossStruct_ThroughMatch()
+    {
+        // Access through a match-typed field (like PE's optional_header)
+        var program = Compile("""
+            @default_endian(little)
+            struct Item { value: u16, size: u16 }
+            struct BodyA { items: Item[3] }
+            struct BodyB { items: Item[3] }
+            struct Header {
+                kind: u8,
+                body: match(kind) {
+                    1 => BodyA,
+                    2 => BodyB,
+                },
+            }
+            @root struct Root {
+                header: Header,
+                @let picked = header.body.items[1].value,
+                data: u8[picked],
+            }
+            """);
+
+        // kind=1 (BodyA), items[0]=(10,11), items[1]=(5,21), items[2]=(30,31)
+        byte[] data = [0x01, 10, 0, 11, 0, 5, 0, 21, 0, 30, 0, 31, 0, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE];
+        var json = ParseToJson(program, data);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal(5, doc.RootElement.GetProperty("data").GetArrayLength());
+    }
 }

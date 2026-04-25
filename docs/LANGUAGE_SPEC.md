@@ -625,7 +625,31 @@ local_files: @at(central_dir[_index].local_header_offset)
              LocalFileEntry[eocd.total_entries],
 ```
 
-### 6.6 Array Methods
+### 6.6 Constant-Index Element Access
+
+Previously parsed arrays support constant-index field access in expressions. The index must be a compile-time integer literal:
+
+```
+// Access a specific element's field
+@let debug_rva = data_directories[6].virtual_address,
+
+// Use in @at / when guards
+@at(data_directories[6].virtual_address) when data_directories[6].rva != 0 {
+    debug_directory: DebugDirectory,
+},
+
+// Cross-struct access (cascades through CopyChildField chain)
+@let picked = header.body.items[2].value,
+data: u8[picked],
+```
+
+Constant-index access works across struct boundaries at any nesting depth. The compiler propagates the required path suffixes through the struct hierarchy via a fixpoint pre-pass, so `a.b.array[i].field` works even when `a`, `b`, and the array are in different structs.
+
+**Limitations:**
+- The index must be an integer literal (variables and computed indices are not supported at compile time)
+- The array must have been fully parsed before the indexed access is evaluated (no forward references)
+
+### 6.7 Array Methods
 
 Previously parsed arrays support search methods in expressions. These methods iterate the array and return a single value — they do NOT return new arrays.
 

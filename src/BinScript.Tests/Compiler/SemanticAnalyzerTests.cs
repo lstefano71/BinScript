@@ -642,4 +642,102 @@ public class SemanticAnalyzerTests
             """);
         Assert.True(result.Success);
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    //  BSC303 — indexed field access through match arm
+    // ═══════════════════════════════════════════════════════════════
+
+    [Fact]
+    public void BSC303_IndexedAccess_FieldInMatchArm_WarnsAtCompileTime()
+    {
+        var result = Compile("""
+            @default_endian(little)
+            struct ItemA { value: u16, extra: u16 }
+            struct ItemB { other: u16 }
+            struct Container {
+                kind: u8,
+                body: match(kind) {
+                    1 => ItemA,
+                    _ => ItemB,
+                },
+            }
+            @root struct Root {
+                items: Container[3],
+                @let picked = items[1].body.extra,
+                data: u8[picked],
+            }
+            """);
+        // "extra" only exists in ItemA, not ItemB — should warn
+        Assert.Contains(Warnings(result), d =>
+            d.Code == "BSC303" && d.Message.Contains("match arm"));
+    }
+
+    [Fact]
+    public void BSC303_IndexedAccess_DirectField_NoWarning()
+    {
+        var result = Compile("""
+            @default_endian(little)
+            struct Entry { value: u16, size: u16 }
+            @root struct Root {
+                entries: Entry[3],
+                @let count = entries[1].value,
+                payload: u8[count],
+            }
+            """);
+        // "value" is a direct field of Entry — no match arms involved
+        Assert.DoesNotContain(Warnings(result), d => d.Code == "BSC303");
+        Assert.True(result.Success);
+    }
+
+    [Fact]
+    public void BSC303_IndexedAccess_FieldOnElementWithMatch_DirectFieldNoWarning()
+    {
+        // The element struct has a match field, but the accessed field is a direct field, not inside the match
+        var result = Compile("""
+            @default_endian(little)
+            struct TypeA { x: u32 }
+            struct TypeB { y: u32 }
+            struct Entry {
+                tag: u8,
+                body: match(tag) {
+                    1 => TypeA,
+                    _ => TypeB,
+                },
+                size: u16,
+            }
+            @root struct Root {
+                entries: Entry[2],
+                @let s = entries[0].size,
+                data: u8[s],
+            }
+            """);
+        // "size" is a direct field of Entry, not inside a match arm
+        Assert.DoesNotContain(Warnings(result), d => d.Code == "BSC303");
+        Assert.True(result.Success);
+    }
+
+    [Fact]
+    public void BSC303_IndexedAccess_FieldInAllMatchArms_NoWarning()
+    {
+        // Field exists in ALL match arm structs — always present at runtime
+        var result = Compile("""
+            @default_endian(little)
+            struct ItemA { value: u16, extra: u16 }
+            struct ItemB { value: u16 }
+            struct Container {
+                kind: u8,
+                body: match(kind) {
+                    1 => ItemA,
+                    _ => ItemB,
+                },
+            }
+            @root struct Root {
+                items: Container[3],
+                @let picked = items[1].body.value,
+                data: u8[picked],
+            }
+            """);
+        // "value" exists in both ItemA and ItemB — no warning
+        Assert.DoesNotContain(Warnings(result), d => d.Code == "BSC303");
+    }
 }

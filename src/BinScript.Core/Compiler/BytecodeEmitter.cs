@@ -45,6 +45,9 @@ public sealed class BytecodeEmitter
         // Pass 1: assign struct indices and intern names.
         AssignStructIndices();
 
+        // Pass 1.5: propagate indexed/dotted paths across struct boundaries.
+        PropagateIndexedPaths();
+
         // Pass 2: emit bytecode for each struct and bits-struct.
         for (int i = 0; i < _structContexts.Count; i++)
         {
@@ -98,6 +101,203 @@ public sealed class BytecodeEmitter
         }
     }
 
+    // ─── Pass 1.5: Cross-struct suffix propagation ────────────────────
+
+    /// <summary>
+    /// Propagates dotted/indexed paths across struct boundaries so every struct
+    /// in the CopyChildField chain has the required hidden fields pre-allocated.
+    /// For example, when PeFile uses <c>optional_header.data_directories[6].virtual_address</c>,
+    /// this pass injects <c>"data_directories[6].virtual_address"</c> into OptionalHeader.
+    /// </summary>
+    private void PropagateIndexedPaths()
+    {
+        // Collect all dotted paths per struct.
+        var pathsPerStruct = new Dictionary<string, HashSet<string>>();
+        foreach (var ctx in _structContexts)
+        {
+            if (ctx.IsBitsStruct || ctx.Decl == null) continue;
+            var paths = new HashSet<string>();
+            CollectDottedPaths(ctx.Decl.Members, paths, new HashSet<string>());
+            pathsPerStruct[ctx.Name] = paths;
+        }
+
+        // Fixpoint: propagate suffixes to child structs until stable.
+        bool changed = true;
+        while (changed)
+        {
+            changed = false;
+            foreach (var ctx in _structContexts)
+            {
+                if (ctx.IsBitsStruct || ctx.Decl == null) continue;
+
+                var allPaths = new HashSet<string>(pathsPerStruct.GetValueOrDefault(ctx.Name) ?? []);
+                allPaths.UnionWith(ctx.PropagatedPaths);
+
+                var declaredNames = CollectDeclaredNamesForStruct(ctx.Decl.Members);
+
+                foreach (var path in allPaths)
+                {
+                    // Extract root: everything before first '.' or '['.
+                    int dotIdx = path.IndexOf('.');
+                    int bracketIdx = path.IndexOf('[');
+                    int firstSep = dotIdx;
+                    if (bracketIdx >= 0 && (firstSep < 0 || bracketIdx < firstSep))
+                        firstSep = bracketIdx;
+
+                    if (firstSep <= 0) continue;
+
+                    string root = path.Substring(0, firstSep);
+                    if (!declaredNames.Contains(root)) continue;
+
+                    string suffix = path.Substring(firstSep);
+
+                    if (suffix.StartsWith('.'))
+                    {
+                        // Cross-struct: strip leading dot, inject into child struct(s).
+                        // Only propagate suffixes that contain '.' or '[' — simple field
+                        // names are real fields in the child struct and CopyChildField
+                        // handles them without pre-allocation.
+                        string childSuffix = suffix.Substring(1);
+                        if (!childSuffix.Contains('.') && !childSuffix.Contains('['))
+                            continue;
+                        var childStructNames = ResolveFieldStructNames(ctx.Decl.Members, root);
+                        foreach (var childName in childStructNames)
+                        {
+                            var childCtx = FindStructContext(childName);
+                            if (childCtx != null && childCtx.PropagatedPaths.Add(childSuffix))
+                                changed = true;
+                        }
+                    }
+                    else if (suffix.StartsWith('['))
+                    {
+                        // Array index: parse [N].elemFieldName. If elemFieldName is
+                        // dotted, propagate it to the array's element struct.
+                        int closeBracket = suffix.IndexOf(']');
+                        if (closeBracket >= 0 && closeBracket + 1 < suffix.Length && suffix[closeBracket + 1] == '.')
+                        {
+                            string elemFieldName = suffix.Substring(closeBracket + 2);
+                            if (elemFieldName.Contains('.'))
+                            {
+                                var elemStructNames = ResolveArrayElementStructNames(ctx.Decl.Members, root);
+                                foreach (var elemName in elemStructNames)
+                                {
+                                    var elemCtx = FindStructContext(elemName);
+                                    if (elemCtx != null && elemCtx.PropagatedPaths.Add(elemFieldName))
+                                        changed = true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private StructEmitContext? FindStructContext(string name)
+    {
+        foreach (var ctx in _structContexts)
+            if (ctx.Name == name) return ctx;
+        return null;
+    }
+
+    private static HashSet<string> CollectDeclaredNamesForStruct(IReadOnlyList<MemberDecl> members)
+    {
+        var names = new HashSet<string>();
+        foreach (var member in members)
+        {
+            if (member is FieldDecl fd) names.Add(fd.Name);
+            else if (member is LetBinding lb) names.Add(lb.Name);
+            else if (member is AtBlock atBlock) CollectDeclaredNames(atBlock.Members, names);
+        }
+        return names;
+    }
+
+    /// <summary>
+    /// Resolves which struct(s) a field references via its type.
+    /// Handles NamedTypeRef (direct) and MatchTypeRef (multiple arms).
+    /// </summary>
+    private List<string> ResolveFieldStructNames(IReadOnlyList<MemberDecl> members, string fieldName)
+    {
+        var result = new List<string>();
+        var fieldDecl = FindFieldDecl(members, fieldName);
+        if (fieldDecl != null)
+            CollectStructNamesFromType(fieldDecl.Type, result);
+        return result;
+    }
+
+    /// <summary>
+    /// Resolves which struct(s) are the element type of an array field.
+    /// </summary>
+    private List<string> ResolveArrayElementStructNames(IReadOnlyList<MemberDecl> members, string fieldName)
+    {
+        var result = new List<string>();
+        var fieldDecl = FindFieldDecl(members, fieldName);
+        if (fieldDecl != null && fieldDecl.Array != null)
+            CollectStructNamesFromType(fieldDecl.Type, result);
+        return result;
+    }
+
+    private static FieldDecl? FindFieldDecl(IReadOnlyList<MemberDecl> members, string fieldName)
+    {
+        foreach (var member in members)
+        {
+            if (member is FieldDecl fd && fd.Name == fieldName)
+                return fd;
+            if (member is AtBlock atBlock)
+            {
+                var found = FindFieldDecl(atBlock.Members, fieldName);
+                if (found != null) return found;
+            }
+        }
+        return null;
+    }
+
+    private void CollectStructNamesFromType(TypeReference type, List<string> names)
+    {
+        switch (type)
+        {
+            case NamedTypeRef named:
+                if (_structIndexMap.ContainsKey(named.Name))
+                    names.Add(named.Name);
+                break;
+            case MatchTypeRef match:
+                foreach (var arm in match.Match.Arms)
+                    CollectStructNamesFromType(arm.Type, names);
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Scans pre-allocated hidden fields for patterns like <c>"arrayName[N].fieldName"</c>
+    /// and records extraction tuples for emitting <see cref="Opcode.ExtractArrayElemField"/>
+    /// after the array loop.
+    /// </summary>
+    private static void CollectArrayExtractions(StructEmitContext ctx)
+    {
+        foreach (var kv in ctx.FieldIndices)
+        {
+            string path = kv.Key;
+            int bracketOpen = path.IndexOf('[');
+            if (bracketOpen < 0) continue;
+            int bracketClose = path.IndexOf(']', bracketOpen);
+            if (bracketClose < 0) continue;
+            if (bracketClose + 1 >= path.Length || path[bracketClose + 1] != '.') continue;
+
+            string arrayName = path.Substring(0, bracketOpen);
+            if (!int.TryParse(path.AsSpan(bracketOpen + 1, bracketClose - bracketOpen - 1), out int elemIndex))
+                continue;
+            string elemFieldName = path.Substring(bracketClose + 2);
+
+            if (!ctx.ArrayExtractions.TryGetValue(arrayName, out var list))
+            {
+                list = [];
+                ctx.ArrayExtractions[arrayName] = list;
+            }
+            list.Add((elemIndex, elemFieldName, path));
+            ctx.IndexedArrayNames.Add(arrayName);
+        }
+    }
+
     // ─── Pass 2a: Emit regular struct ─────────────────────────────────
 
     private void EmitStruct(StructEmitContext ctx)
@@ -116,8 +316,14 @@ public sealed class BytecodeEmitter
         // EmitFieldAccess can resolve them via FieldIndices.
         PreAllocateDottedFields(ctx, decl.Members);
 
+        // Collect indexed array extractions from pre-allocated hidden fields.
+        CollectArrayExtractions(ctx);
+
         // Pre-scan: identify which array fields are targets of .find()/.any()/.all()
         ctx.SearchedArrayNames = CollectSearchedArrayNames(decl.Members);
+
+        // Also enable ArrayStoreElem for arrays that are indexed by constant.
+        ctx.SearchedArrayNames.UnionWith(ctx.IndexedArrayNames);
 
         EmitMembers(ctx, decl.Members);
         builder.Emit(Opcode.Return);
@@ -128,6 +334,7 @@ public sealed class BytecodeEmitter
     /// like <c>child.field</c> and pre-allocates hidden field IDs in the parent scope.
     /// Only pre-allocates paths whose root identifier is a declared field or let binding
     /// in this struct (not lambda parameters or other scopes).
+    /// Also includes paths propagated from parent structs via <see cref="PropagateIndexedPaths"/>.
     /// </summary>
     private void PreAllocateDottedFields(StructEmitContext ctx, IReadOnlyList<MemberDecl> members)
     {
@@ -143,6 +350,9 @@ public sealed class BytecodeEmitter
         var dottedPaths = new HashSet<string>();
         CollectDottedPaths(members, dottedPaths, new HashSet<string>());
 
+        // Include paths propagated from parent structs (cross-struct suffix propagation).
+        dottedPaths.UnionWith(ctx.PropagatedPaths);
+
         // After collection, any inlined @map bodies may have introduced mangled let names
         // (e.g., __map_0_s). Add these to declaredNames so their dotted paths get allocated.
         foreach (var inlined in _inlinedMapCalls.Values)
@@ -156,11 +366,16 @@ public sealed class BytecodeEmitter
 
         foreach (var path in dottedPaths)
         {
-            // Only pre-allocate if the root identifier is a declared field.
+            // Extract root identifier: everything before first '.' or '['.
             int dotIdx = path.IndexOf('.');
-            if (dotIdx > 0)
+            int bracketIdx = path.IndexOf('[');
+            int firstSep = dotIdx;
+            if (bracketIdx >= 0 && (firstSep < 0 || bracketIdx < firstSep))
+                firstSep = bracketIdx;
+
+            if (firstSep > 0)
             {
-                string root = path.Substring(0, dotIdx);
+                string root = path.Substring(0, firstSep);
                 if (!declaredNames.Contains(root)) continue;
             }
 
@@ -1216,6 +1431,30 @@ public sealed class BytecodeEmitter
         ctx.Builder.Emit(Opcode.ArrayEnd);
 
         ctx.Builder.Emit(Opcode.EmitArrayEnd);
+
+        // Emit ExtractArrayElemField for any constant-indexed accesses on this array.
+        EmitArrayExtractions(ctx, fieldName, fieldId);
+    }
+
+    /// <summary>
+    /// Emits <see cref="Opcode.ExtractArrayElemField"/> instructions for each
+    /// constant-index access (e.g., <c>array[6].field</c>) targeting this array.
+    /// Called after the array loop completes so stored elements are available.
+    /// </summary>
+    private void EmitArrayExtractions(StructEmitContext ctx, string arrayName, ushort arrayFieldId)
+    {
+        if (!ctx.ArrayExtractions.TryGetValue(arrayName, out var extractions)) return;
+
+        foreach (var (elemIndex, elemFieldName, hiddenFieldName) in extractions)
+        {
+            ushort elemFieldNameIdx = _masterBuilder.InternString(elemFieldName);
+            ushort dstFieldId = ctx.FieldIndices[hiddenFieldName];
+            ctx.Builder.Emit(Opcode.ExtractArrayElemField);
+            ctx.Builder.EmitU16(arrayFieldId);
+            ctx.Builder.EmitU16((ushort)elemIndex);
+            ctx.Builder.EmitU16(elemFieldNameIdx);
+            ctx.Builder.EmitU16(dstFieldId);
+        }
     }
 
     // ─── Let binding ──────────────────────────────────────────────────
@@ -2143,6 +2382,19 @@ public sealed class BytecodeEmitter
         public Dictionary<string, ushort> ParamIndices { get; } = new();
         public List<FieldMeta> FieldMetas { get; } = new();
         public HashSet<string> SearchedArrayNames { get; set; } = new();
+
+        /// <summary>Paths propagated from parent structs (cross-struct suffix propagation).</summary>
+        public HashSet<string> PropagatedPaths { get; } = new();
+
+        /// <summary>Array field names that need ArrayStoreElem for constant-index access.</summary>
+        public HashSet<string> IndexedArrayNames { get; } = new();
+
+        /// <summary>
+        /// Maps array field name → list of extraction tuples for ExtractArrayElemField.
+        /// Populated by <see cref="CollectArrayExtractions"/>.
+        /// </summary>
+        public Dictionary<string, List<(int ElemIndex, string ElemFieldName, string HiddenFieldName)>> ArrayExtractions { get; } = new();
+
         private ushort _nextFieldId;
 
         public ushort AllocateField(string name, FieldModifiers mods, BytecodeBuilder masterBuilder)

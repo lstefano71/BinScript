@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-04-25 22:24
+
+### Changed
+- **stdlib/gif.bsx** — Expanded from partial header-only parser to full GIF87a/GIF89a parser. Now supports global and local color tables (conditional via packed byte bitwise ops), image data blocks with LZW sub-blocks, and all extension types (graphics control, application/NETSCAPE2.0, comment, plain text). Uses `@until_sentinel` for sub-block and trailer termination, `match` for block/extension type dispatch, and `@let` with shift/bitwise expressions for color table size calculation.
+- **src/BinScript.Tests/Stdlib/GifTests.cs** — Comprehensive test coverage: verifies header, screen descriptor, GCT colors, block counts, NETSCAPE application extension, GCE delay/transparency fields, image dimensions, LCT presence, and LZW sub-block structure for both GIF87a single-frame and GIF89a two-frame animated samples.
+
 ## 2026-04-25 22:18
 
 ### Added

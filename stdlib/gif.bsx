@@ -1,14 +1,22 @@
+// GIF87a / GIF89a image format
+// Supports: header, logical screen descriptor, global/local color tables,
+// image data blocks, extensions (graphics control, application, comment, plain text)
+
 @default_endian(little)
 
-@coverage(partial)
-@root struct GifFile {
-    header: GifHeader,
-    screen: LogicalScreenDescriptor,
-}
+// ---------------------------------------------------------------------------
+// Basic Structs
+// ---------------------------------------------------------------------------
 
 struct GifHeader {
     signature: fixed_string[3],
     version: fixed_string[3],
+}
+
+struct RgbColor {
+    red: u8,
+    green: u8,
+    blue: u8,
 }
 
 struct LogicalScreenDescriptor {
@@ -17,4 +25,111 @@ struct LogicalScreenDescriptor {
     packed: u8,
     bg_color_index: u8,
     pixel_aspect_ratio: u8,
+}
+
+struct SubBlock {
+    size: u8,
+    data: bytes[size],
+}
+
+// ---------------------------------------------------------------------------
+// Extensions
+// ---------------------------------------------------------------------------
+
+struct GraphicsControlExtension {
+    block_size: u8,
+    packed: u8,
+    delay_time: u16,
+    transparent_color_index: u8,
+    terminator: u8,
+}
+
+struct ApplicationExtension {
+    block_size: u8,
+    identifier: fixed_string[8],
+    auth_code: fixed_string[3],
+    sub_blocks: SubBlock[] @until_sentinel(b => b.size == 0),
+}
+
+struct CommentExtension {
+    sub_blocks: SubBlock[] @until_sentinel(b => b.size == 0),
+}
+
+struct PlainTextExtension {
+    block_size: u8,
+    text_grid_left: u16,
+    text_grid_top: u16,
+    text_grid_width: u16,
+    text_grid_height: u16,
+    char_cell_width: u8,
+    char_cell_height: u8,
+    fg_color_index: u8,
+    bg_color_index: u8,
+    sub_blocks: SubBlock[] @until_sentinel(b => b.size == 0),
+}
+
+struct GenericExtension {
+    sub_blocks: SubBlock[] @until_sentinel(b => b.size == 0),
+}
+
+struct Extension {
+    label: u8,
+    body: match(label) {
+        0xF9 => GraphicsControlExtension,
+        0xFF => ApplicationExtension,
+        0xFE => CommentExtension,
+        0x01 => PlainTextExtension,
+        _    => GenericExtension,
+    },
+}
+
+// ---------------------------------------------------------------------------
+// Image Data
+// ---------------------------------------------------------------------------
+
+struct ImageData {
+    left: u16,
+    top: u16,
+    width: u16,
+    height: u16,
+    packed: u8,
+    @let lct_flag = (packed >> 7) & 1,
+    @let lct_size_field = packed & 7,
+    @let lct_count = 1 << (lct_size_field + 1),
+    local_color_table: match(lct_flag) {
+        1 => RgbColor[lct_count],
+        _ => bytes[0],
+    },
+    lzw_min_code_size: u8,
+    sub_blocks: SubBlock[] @until_sentinel(b => b.size == 0),
+}
+
+// ---------------------------------------------------------------------------
+// Block (top-level repeating unit)
+// ---------------------------------------------------------------------------
+
+struct GifBlock {
+    introducer: u8,
+    body: match(introducer) {
+        0x2C => ImageData,
+        0x21 => Extension,
+        0x3B => bytes[0],
+    },
+}
+
+// ---------------------------------------------------------------------------
+// Root
+// ---------------------------------------------------------------------------
+
+@root struct GifFile {
+    header: GifHeader,
+    screen: LogicalScreenDescriptor,
+    @let gct_flag = (screen.packed >> 7) & 1,
+    @let gct_size_field = screen.packed & 7,
+    @let gct_count = 1 << (gct_size_field + 1),
+    global_color_table: match(gct_flag) {
+        1 => RgbColor[gct_count],
+        _ => bytes[0],
+    },
+    blocks: GifBlock[] @until_sentinel(b => b.introducer == 0x3B),
 }

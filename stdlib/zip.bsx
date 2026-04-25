@@ -1,17 +1,140 @@
+// ZIP archive format definition
+// Parses from the End of Central Directory (EOCD) at the tail of the file,
+// then reads central directory entries and local file entries.
+
 @default_endian(little)
 
 @coverage(partial)
-@root struct ZipFile {
-    local_header: LocalFileHeader,
+
+// ───────────────────────── Enums ─────────────────────────
+
+enum CompressionMethod : u16 {
+    Stored    = 0,
+    Shrunk    = 1,
+    Reduced1  = 2,
+    Reduced2  = 3,
+    Reduced3  = 4,
+    Reduced4  = 5,
+    Imploded  = 6,
+    Deflate   = 8,
+    Deflate64 = 9,
+    BZip2     = 12,
+    LZMA      = 14,
+    Zstd      = 93,
+    XZ        = 95,
+    JPEG      = 96,
+    WavPack   = 97,
+    PPMd      = 98,
 }
 
-struct LocalFileHeader {
+// ──────────────────── Bitfield Flags ─────────────────────
+
+bits struct GeneralPurposeFlags : u16 {
+    encrypted: bit,              // bit 0
+    compress_option1: bit,       // bit 1
+    compress_option2: bit,       // bit 2
+    data_descriptor: bit,        // bit 3
+    enhanced_deflation: bit,     // bit 4
+    compressed_patched: bit,     // bit 5
+    strong_encryption: bit,      // bit 6
+    _reserved1: bits[4],         // bits 7-10
+    utf8: bit,                   // bit 11
+    _reserved2: bit,             // bit 12
+    masked_header: bit,          // bit 13
+    _reserved3: bits[2],         // bits 14-15
+}
+
+// ───────────────── Extra Field Types ─────────────────────
+// These structs describe the internal layout of extra field entries.
+// Extra fields are a sequence of (header_id: u16, data_size: u16, data)
+// records within the extra_field byte blob.
+
+// Zip64 extended information (header_id = 0x0001)
+// Fields present only when corresponding regular field is 0xFFFFFFFF/0xFFFF
+struct Zip64Extended {
+    original_size: u64,
+    compressed_size: u64,
+    local_header_offset: u64,
+    disk: u64,
+}
+
+// Extended timestamp (header_id = 0x5455)
+struct ExtendedTimestamp {
+    flags: u8,
+    mod_time: u32,
+    access_time: u32,
+    create_time: u32,
+}
+
+// Unix extra field - new (header_id = 0x7875)
+struct UnixExtraNew {
+    version: u8,
+    uid_size: u8,
+    uid: bytes[uid_size],
+    gid_size: u8,
+    gid: bytes[gid_size],
+}
+
+// Individual extra field entry with tagged data
+struct ExtraFieldEntry {
+    header_id: u16,
+    data_size: u16,
+    data: match(header_id) {
+        0x0001 => Zip64Extended,
+        0x5455 => ExtendedTimestamp,
+        0x7875 => UnixExtraNew,
+        _ => bytes[data_size],
+    },
+}
+
+// ──────────── End of Central Directory ────────────────────
+
+struct EndOfCentralDir {
+    signature: u32 = 0x06054B50,
+    disk_number: u16,
+    cd_disk: u16,
+    cd_entries_this_disk: u16,
+    cd_entries_total: u16,
+    cd_size: u32,
+    cd_offset: u32,
+    comment_length: u16,
+    comment: string[comment_length],
+}
+
+// ─────────────── Central Directory Entry ─────────────────
+
+struct CentralDirEntry {
+    signature: u32 = 0x02014B50,
+    version_made_by: u16,
+    version_needed: u16,
+    flags: GeneralPurposeFlags,
+    compression: CompressionMethod,
+    last_mod_time: u16,
+    last_mod_date: u16,
+    crc32: u32,
+    compressed_size: u32,
+    uncompressed_size: u32,
+    name_length: u16,
+    extra_length: u16,
+    comment_length: u16,
+    disk_start: u16,
+    internal_attrs: u16,
+    external_attrs: u32,
+    local_header_offset: u32,
+    file_name: string[name_length],
+    extra_field: bytes[extra_length],
+    comment: string[comment_length],
+}
+
+// ─────────────────── Local File Entry ────────────────────
+
+struct LocalFileEntry {
     signature: u32 = 0x04034B50,
     version_needed: u16,
-    flags: u16,
-    compression: u16,
-    mod_time: u16,
-    mod_date: u16,
+    flags: GeneralPurposeFlags,
+    compression: CompressionMethod,
+    last_mod_time: u16,
+    last_mod_date: u16,
     crc32: u32,
     compressed_size: u32,
     uncompressed_size: u32,
@@ -20,4 +143,41 @@ struct LocalFileHeader {
     file_name: string[name_length],
     extra_field: bytes[extra_length],
     data: bytes[compressed_size],
+}
+
+// ──────── Data Descriptor (when bit 3 of flags is set) ───
+
+struct DataDescriptor {
+    signature: u32 = 0x08074B50,
+    crc32: u32,
+    compressed_size: u32,
+    uncompressed_size: u32,
+}
+
+// ──────────────────── Root: ZIP File ─────────────────────
+
+@root struct ZipFile {
+    // Read the End of Central Directory at the tail (assumes no archive comment)
+    @at(@input_size - 22) {
+        eocd: EndOfCentralDir,
+    },
+
+    // Re-read key EOCD values as hidden flat fields so they can be
+    // referenced directly (dotted access like eocd.cd_offset is not
+    // supported by the runtime).
+    @at(@input_size - 12) {
+        @hidden _cd_entries: u16,
+    },
+    @at(@input_size - 6) {
+        @hidden _cd_offset: u32,
+    },
+
+    // Read central directory entries at the offset specified by EOCD
+    @at(_cd_offset) {
+        central_dir: CentralDirEntry[_cd_entries],
+    },
+
+    // Local file entries are sequential from offset 0
+    // (cursor is at 0 since @at blocks restore position)
+    local_files: LocalFileEntry[_cd_entries],
 }

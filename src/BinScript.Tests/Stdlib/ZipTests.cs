@@ -30,15 +30,25 @@ public class ZipTests
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
 
-        var lh = root.GetProperty("local_header");
-        Assert.Equal(0x04034B50, lh.GetProperty("signature").GetInt64());
-        Assert.Equal(20, lh.GetProperty("version_needed").GetInt64());
-        Assert.Equal(0, lh.GetProperty("compression").GetInt64());
-        Assert.Equal(14, lh.GetProperty("compressed_size").GetInt64());
-        Assert.Equal(14, lh.GetProperty("uncompressed_size").GetInt64());
-        Assert.Equal(10, lh.GetProperty("name_length").GetInt64());
-        Assert.Equal(0, lh.GetProperty("extra_length").GetInt64());
-        Assert.Equal("single.txt", lh.GetProperty("file_name").GetString());
+        // EOCD
+        var eocd = root.GetProperty("eocd");
+        Assert.Equal(0x06054B50, eocd.GetProperty("signature").GetInt64());
+        Assert.Equal(1, eocd.GetProperty("cd_entries_total").GetInt64());
+        Assert.Equal(54, eocd.GetProperty("cd_offset").GetInt64());
+
+        // Central directory
+        var cd = root.GetProperty("central_dir");
+        Assert.Equal(1, cd.GetArrayLength());
+        Assert.Equal(0x02014B50, cd[0].GetProperty("signature").GetInt64());
+        Assert.Equal("single.txt", cd[0].GetProperty("file_name").GetString());
+
+        // Local files
+        var lf = root.GetProperty("local_files");
+        Assert.Equal(1, lf.GetArrayLength());
+        Assert.Equal(0x04034B50, lf[0].GetProperty("signature").GetInt64());
+        Assert.Equal("single.txt", lf[0].GetProperty("file_name").GetString());
+        Assert.Equal(14, lf[0].GetProperty("compressed_size").GetInt64());
+        Assert.Equal(14, lf[0].GetProperty("uncompressed_size").GetInt64());
     }
 
     [Fact]
@@ -51,12 +61,28 @@ public class ZipTests
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
 
-        var lh = root.GetProperty("local_header");
-        Assert.Equal(0x04034B50, lh.GetProperty("signature").GetInt64());
-        Assert.Equal(0, lh.GetProperty("compression").GetInt64());
-        Assert.Equal(13, lh.GetProperty("compressed_size").GetInt64());
-        Assert.Equal(13, lh.GetProperty("uncompressed_size").GetInt64());
-        Assert.Equal(9, lh.GetProperty("name_length").GetInt64());
-        Assert.Equal("hello.txt", lh.GetProperty("file_name").GetString());
+        // EOCD
+        var eocd = root.GetProperty("eocd");
+        Assert.Equal(0x06054B50, eocd.GetProperty("signature").GetInt64());
+        Assert.Equal(2, eocd.GetProperty("cd_entries_total").GetInt64());
+
+        // Central directory
+        var cd = root.GetProperty("central_dir");
+        Assert.Equal(2, cd.GetArrayLength());
+        Assert.Equal("hello.txt", cd[0].GetProperty("file_name").GetString());
+        Assert.Equal("data.txt", cd[1].GetProperty("file_name").GetString());
+
+        // Local files
+        var lf = root.GetProperty("local_files");
+        Assert.Equal(2, lf.GetArrayLength());
+        Assert.Equal(0x04034B50, lf[0].GetProperty("signature").GetInt64());
+        Assert.Equal(0, lf[0].GetProperty("compression").GetInt64());
+        Assert.Equal(13, lf[0].GetProperty("compressed_size").GetInt64());
+        Assert.Equal(13, lf[0].GetProperty("uncompressed_size").GetInt64());
+        Assert.Equal(9, lf[0].GetProperty("name_length").GetInt64());
+        Assert.Equal("hello.txt", lf[0].GetProperty("file_name").GetString());
+
+        Assert.Equal("data.txt", lf[1].GetProperty("file_name").GetString());
+        Assert.Equal(29, lf[1].GetProperty("compressed_size").GetInt64());
     }
 }

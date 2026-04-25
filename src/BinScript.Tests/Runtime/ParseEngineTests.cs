@@ -1458,4 +1458,161 @@ struct Section {
         Assert.Equal(3, sections.GetArrayLength());
         Assert.Equal(100, sections[1].GetProperty("start").GetInt32());
     }
+
+    // ─── @map tests ──────────────────────────────────────────────────
+
+    [Fact]
+    public void Map_SimpleScalarExpression()
+    {
+        // @map that adds two parameters — purely scalar, no .find() involved.
+        var program = Compile("""
+            @default_endian(little)
+            @map add(a: u32, b: u32): u32 = a + b
+            @root struct Test {
+                x: u16,
+                y: u16,
+                @let sum = add(x, y),
+                result: u16,
+            }
+            """);
+
+        byte[] data = [0x0A, 0x00, 0x14, 0x00, 0xFF, 0x00]; // x=10, y=20, result=255
+        var json = ParseToJson(program, data);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal(10, doc.RootElement.GetProperty("x").GetInt64());
+        Assert.Equal(20, doc.RootElement.GetProperty("y").GetInt64());
+        Assert.Equal(255, doc.RootElement.GetProperty("result").GetInt64());
+    }
+
+    [Fact]
+    public void Map_UsedInSeekExpression()
+    {
+        // @map result used directly in @seek — the value is consumed as a seek target.
+        var program = Compile("""
+            @default_endian(little)
+            @map double(v: u32): u32 = v * 2
+            @root struct Test {
+                offset: u16,
+                @seek(double(offset))
+                value: u8,
+            }
+            """);
+
+        // offset=3, seek to 6, value at position 6
+        byte[] data = [0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x42]; // value at [6] = 0x42
+        var json = ParseToJson(program, data);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal(0x42, doc.RootElement.GetProperty("value").GetInt64());
+    }
+
+    [Fact]
+    public void Map_UsedInAtExpression()
+    {
+        // @map used inside @at() expression.
+        var program = Compile("""
+            @default_endian(little)
+            @map add_one(v: u32): u32 = v + 1
+            @root struct Test {
+                field_ptr: u16,
+                @at(add_one(field_ptr)) {
+                    value: u8,
+                },
+            }
+            """);
+
+        // field_ptr=4, @at(5), value at position 5
+        byte[] data = [0x04, 0x00, 0x00, 0x00, 0x00, 0xAA]; // value at [5] = 0xAA
+        var json = ParseToJson(program, data);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal(0xAA, doc.RootElement.GetProperty("value").GetInt64());
+    }
+
+    [Fact]
+    public void Map_WithBlockExprAndFindSearch()
+    {
+        // The core use case: @map with @let s = array.find(...), result expression using s.field.
+        // Simulates RVA-to-offset resolution.
+        var program = Compile("""
+            @default_endian(little)
+            struct Section {
+                vaddr: u32,
+                vsize: u32,
+                raw_offset: u32,
+            }
+            @map resolve(rva: u32, sects: Section[]): u32 = {
+                @let s = sects.find(s => rva >= s.vaddr && rva < s.vaddr + s.vsize),
+                s.raw_offset + (rva - s.vaddr)
+            }
+            @root struct Test {
+                num_sections: u16,
+                sections: Section[num_sections],
+                target_rva: u32,
+                @at(resolve(target_rva, sections)) {
+                    payload: u8,
+                },
+            }
+            """);
+
+        // Layout:
+        //  [0..1] num_sections = 2
+        //  [2..13] section 0: vaddr=0x1000, vsize=0x100, raw_offset=0x200 (won't match)
+        //  [14..25] section 1: vaddr=0x2000, vsize=0x200, raw_offset=30 (matches, raw_offset → byte 30)
+        //  [26..29] target_rva = 0x2004
+        //  [30] payload = 0xBB (at raw_offset + (rva - vaddr) = 30 + 4 = 34)
+        // Actually let me recalculate:
+        //   Section 1: vaddr=0x2000, vsize=0x200, raw_offset=34
+        //   target_rva = 0x2000 → resolved = 34 + (0x2000 - 0x2000) = 34
+        //   payload at byte 34 = 0xBB
+        var ms = new MemoryStream();
+        var bw = new BinaryWriter(ms);
+        bw.Write((ushort)2);             // num_sections = 2
+        // Section 0
+        bw.Write((uint)0x1000);          // vaddr
+        bw.Write((uint)0x100);           // vsize
+        bw.Write((uint)0x200);           // raw_offset (doesn't matter, won't match)
+        // Section 1
+        bw.Write((uint)0x2000);          // vaddr
+        bw.Write((uint)0x200);           // vsize
+        bw.Write((uint)34);              // raw_offset → points to byte 34
+        // target_rva
+        bw.Write((uint)0x2000);          // target_rva
+
+        // Pad to byte 34 and put payload there
+        while (ms.Position < 34) bw.Write((byte)0);
+        bw.Write((byte)0xBB);            // payload at 34
+
+        byte[] data = ms.ToArray();
+        var json = ParseToJson(program, data);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal(0xBB, doc.RootElement.GetProperty("payload").GetInt64());
+    }
+
+    [Fact]
+    public void Map_MultipleCallsInSameStruct()
+    {
+        // Two calls to the same @map in one struct — tests that each call site
+        // gets independently inlined with its own arguments.
+        var program = Compile("""
+            @default_endian(little)
+            @map offset(base: u32, delta: u32): u32 = base + delta
+            @root struct Test {
+                a: u16,
+                b: u16,
+                @at(offset(a, 10)) {
+                    val1: u8,
+                },
+                @at(offset(b, 8)) {
+                    val2: u8,
+                },
+            }
+            """);
+
+        // a=0, b=0 → offset(0,10)=10, offset(0,8)=8
+        // Position 8 = 0xDD, Position 10 = 0xCC
+        byte[] data = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xDD, 0x00, 0xCC];
+        var json = ParseToJson(program, data);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal(0xCC, doc.RootElement.GetProperty("val1").GetInt64());
+        Assert.Equal(0xDD, doc.RootElement.GetProperty("val2").GetInt64());
+    }
 }

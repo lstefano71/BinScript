@@ -15,6 +15,7 @@ public sealed class TypeResolver
     public Dictionary<string, BitsStructDecl> BitsStructs { get; } = new();
     public Dictionary<string, EnumDecl> Enums { get; } = new();
     public Dictionary<string, ConstDecl> Constants { get; } = new();
+    public Dictionary<string, MapDecl> Maps { get; } = new();
 
     public List<Diagnostic> Diagnostics { get; } = [];
 
@@ -114,13 +115,21 @@ public sealed class TypeResolver
                 continue;
             Constants[c.Name] = c;
         }
+
+        foreach (var m in file.Maps)
+        {
+            if (!TryRegisterName(m.Name, m.Span))
+                continue;
+            Maps[m.Name] = m;
+        }
     }
 
     /// <summary>Returns <c>false</c> and emits a diagnostic if the name is already taken.</summary>
     private bool TryRegisterName(string name, SourceSpan span)
     {
         if (Structs.ContainsKey(name) || BitsStructs.ContainsKey(name) ||
-            Enums.ContainsKey(name) || Constants.ContainsKey(name))
+            Enums.ContainsKey(name) || Constants.ContainsKey(name) ||
+            Maps.ContainsKey(name))
         {
             Diagnostics.Add(new Diagnostic(
                 DiagnosticSeverity.Error, "BSC100",

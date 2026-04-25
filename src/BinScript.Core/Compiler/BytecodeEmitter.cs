@@ -27,6 +27,11 @@ public sealed class BytecodeEmitter
     // When set, s.field emits PushElemField instead of PushFieldVal.
     private string? _currentSearchLambdaParam;
 
+    // Counter for generating unique mangled names per @map call site.
+    private int _mapCallSiteCounter;
+    // Memoize inlined @map bodies by source span so pre-scan and emission see the same rewritten AST.
+    private readonly Dictionary<SourceSpan, Expression> _inlinedMapCalls = new();
+
     public BytecodeEmitter(ScriptFile ast, TypeResolver typeEnv, Dictionary<string, object>? parameters = null)
     {
         _ast = ast;
@@ -138,6 +143,17 @@ public sealed class BytecodeEmitter
         var dottedPaths = new HashSet<string>();
         CollectDottedPaths(members, dottedPaths, new HashSet<string>());
 
+        // After collection, any inlined @map bodies may have introduced mangled let names
+        // (e.g., __map_0_s). Add these to declaredNames so their dotted paths get allocated.
+        foreach (var inlined in _inlinedMapCalls.Values)
+        {
+            if (inlined is BlockExpr block)
+            {
+                foreach (var binding in block.Bindings)
+                    declaredNames.Add(binding.Name);
+            }
+        }
+
         foreach (var path in dottedPaths)
         {
             // Only pre-allocate if the root identifier is a declared field.
@@ -170,7 +186,7 @@ public sealed class BytecodeEmitter
     /// and collects their flattened dotted path strings.
     /// Tracks lambda parameters to exclude paths rooted in them.
     /// </summary>
-    private static void CollectDottedPaths(IReadOnlyList<MemberDecl> members, HashSet<string> paths, HashSet<string> lambdaParams)
+    private void CollectDottedPaths(IReadOnlyList<MemberDecl> members, HashSet<string> paths, HashSet<string> lambdaParams)
     {
         foreach (var member in members)
         {
@@ -197,7 +213,7 @@ public sealed class BytecodeEmitter
         }
     }
 
-    private static void CollectDottedPathsInField(FieldDecl field, HashSet<string> paths, HashSet<string> lambdaParams)
+    private void CollectDottedPathsInField(FieldDecl field, HashSet<string> paths, HashSet<string> lambdaParams)
     {
         if (field.Modifiers.DerivedExpression is not null)
             CollectDottedPathsInExpr(field.Modifiers.DerivedExpression, paths, lambdaParams);
@@ -222,7 +238,7 @@ public sealed class BytecodeEmitter
         }
     }
 
-    private static void CollectDottedPathsInExpr(Expression expr, HashSet<string> paths, HashSet<string> lambdaParams)
+    private void CollectDottedPathsInExpr(Expression expr, HashSet<string> paths, HashSet<string> lambdaParams)
     {
         switch (expr)
         {
@@ -249,7 +265,16 @@ public sealed class BytecodeEmitter
                 CollectDottedPathsInExpr(ia.Index, paths, lambdaParams);
                 break;
             case FunctionCallExpr fn:
-                foreach (var arg in fn.Args) CollectDottedPathsInExpr(arg, paths, lambdaParams);
+                // Check for @map call — inline and collect from rewritten body.
+                if (_typeEnv.Maps.TryGetValue(fn.FunctionName, out var mapDecl))
+                {
+                    var inlined = GetOrInlineMapCall(fn, mapDecl);
+                    CollectDottedPathsInExpr(inlined, paths, lambdaParams);
+                }
+                else
+                {
+                    foreach (var arg in fn.Args) CollectDottedPathsInExpr(arg, paths, lambdaParams);
+                }
                 break;
             case MethodCallExpr mc:
                 CollectDottedPathsInExpr(mc.Object, paths, lambdaParams);
@@ -260,6 +285,13 @@ public sealed class BytecodeEmitter
                 // Lambda parameter shadows — add to exclusion set.
                 var innerParams = new HashSet<string>(lambdaParams) { lambda.Parameter };
                 CollectDottedPathsInExpr(lambda.Body, paths, innerParams);
+                break;
+            }
+            case BlockExpr block:
+            {
+                foreach (var binding in block.Bindings)
+                    CollectDottedPathsInExpr(binding.Value, paths, lambdaParams);
+                CollectDottedPathsInExpr(block.Result, paths, lambdaParams);
                 break;
             }
         }
@@ -280,7 +312,7 @@ public sealed class BytecodeEmitter
     /// Scans all expressions in members for MethodCallExpr with .find()/.any()/.all()/.find_or()
     /// and returns the set of array field names that are targets of these calls.
     /// </summary>
-    private static HashSet<string> CollectSearchedArrayNames(IReadOnlyList<MemberDecl> members)
+    private HashSet<string> CollectSearchedArrayNames(IReadOnlyList<MemberDecl> members)
     {
         var names = new HashSet<string>();
         foreach (var member in members)
@@ -288,7 +320,7 @@ public sealed class BytecodeEmitter
         return names;
     }
 
-    private static void CollectSearchedArrayNamesInMember(MemberDecl member, HashSet<string> names)
+    private void CollectSearchedArrayNamesInMember(MemberDecl member, HashSet<string> names)
     {
         switch (member)
         {
@@ -305,13 +337,14 @@ public sealed class BytecodeEmitter
                 break;
             case AtBlock atBlock:
                 CollectSearchedArrayNamesInExpr(atBlock.Offset, names);
+                if (atBlock.Guard is not null) CollectSearchedArrayNamesInExpr(atBlock.Guard, names);
                 foreach (var m in atBlock.Members)
                     CollectSearchedArrayNamesInMember(m, names);
                 break;
         }
     }
 
-    private static void CollectSearchedArrayNamesInExpr(Expression expr, HashSet<string> names)
+    private void CollectSearchedArrayNamesInExpr(Expression expr, HashSet<string> names)
     {
         switch (expr)
         {
@@ -334,8 +367,17 @@ public sealed class BytecodeEmitter
                 CollectSearchedArrayNamesInExpr(un.Operand, names);
                 break;
             case FunctionCallExpr fn:
-                foreach (var arg in fn.Args)
-                    CollectSearchedArrayNamesInExpr(arg, names);
+                // Check for @map call — inline and collect from rewritten body.
+                if (_typeEnv.Maps.TryGetValue(fn.FunctionName, out var mapDecl))
+                {
+                    var inlined = GetOrInlineMapCall(fn, mapDecl);
+                    CollectSearchedArrayNamesInExpr(inlined, names);
+                }
+                else
+                {
+                    foreach (var arg in fn.Args)
+                        CollectSearchedArrayNamesInExpr(arg, names);
+                }
                 break;
             case LambdaExpr lambda:
                 CollectSearchedArrayNamesInExpr(lambda.Body, names);
@@ -1075,6 +1117,36 @@ public sealed class BytecodeEmitter
         ctx.Builder.Emit(Opcode.ArraySearchEnd);
     }
 
+    // ─── Block expression (@map body) ─────────────────────────────────
+
+    /// <summary>
+    /// Emits a block expression: processes @let bindings (including .find() searches),
+    /// then emits the result expression which leaves a value on the stack.
+    /// Used for inlined @map bodies.
+    /// </summary>
+    private void EmitBlockExpr(StructEmitContext ctx, BlockExpr block)
+    {
+        // Process each let binding.
+        foreach (var binding in block.Bindings)
+        {
+            ushort fieldId = ctx.AllocateField(binding.Name, new FieldModifiers { IsHidden = true }, _masterBuilder);
+
+            // Special handling for .find()/.find_or() — result is a struct projection.
+            if (binding.Value is MethodCallExpr mc && mc.MethodName is "find" or "find_or")
+            {
+                EmitArraySearchLetBinding(ctx, binding.Name, fieldId, mc);
+                continue;
+            }
+
+            EmitExpression(ctx, binding.Value);
+            ctx.Builder.Emit(Opcode.StoreFieldVal);
+            ctx.Builder.EmitU16(fieldId);
+        }
+
+        // Emit the result expression — leaves a value on the stack.
+        EmitExpression(ctx, block.Result);
+    }
+
     // ─── Align ────────────────────────────────────────────────────────
 
     private void EmitAlign(StructEmitContext ctx, AlignDirective align)
@@ -1209,6 +1281,10 @@ public sealed class BytecodeEmitter
                 ctx.Builder.Emit(Opcode.MatchBegin);
                 ctx.Builder.Emit(Opcode.MatchEnd);
                 break;
+
+            case BlockExpr block:
+                EmitBlockExpr(ctx, block);
+                break;
         }
     }
 
@@ -1319,6 +1395,145 @@ public sealed class BytecodeEmitter
         };
     }
 
+    // ─── @map inlining ───────────────────────────────────────────────────
+
+    /// <summary>
+    /// Returns the inlined (rewritten) expression for a @map call, using a memoized
+    /// cache so that pre-scan passes and emission see the same mangled names.
+    /// </summary>
+    private Expression GetOrInlineMapCall(FunctionCallExpr fn, MapDecl map)
+    {
+        if (!_inlinedMapCalls.TryGetValue(fn.Span, out var inlined))
+        {
+            inlined = InlineMapCall(map, fn.Args, _mapCallSiteCounter++);
+            _inlinedMapCalls[fn.Span] = inlined;
+        }
+        return inlined;
+    }
+
+    /// <summary>
+    /// Creates a rewritten copy of a @map body with:
+    /// - Parameter names substituted with actual argument expressions
+    /// - Block-local @let binding names mangled to avoid collision across call sites
+    /// </summary>
+    private static Expression InlineMapCall(MapDecl map, IReadOnlyList<Expression> args, int callsiteId)
+    {
+        // Build param → arg substitution map.
+        var paramSubst = new Dictionary<string, Expression>();
+        for (int i = 0; i < map.Params.Count && i < args.Count; i++)
+            paramSubst[map.Params[i].Name] = args[i];
+
+        if (map.Body is BlockExpr block)
+        {
+            // Mangle internal let binding names to avoid collision.
+            string prefix = $"__map_{callsiteId}_";
+            var letNameMap = new Dictionary<string, string>();
+            foreach (var binding in block.Bindings)
+                letNameMap[binding.Name] = prefix + binding.Name;
+
+            // Rewrite bindings.
+            var newBindings = new List<MapLetBinding>(block.Bindings.Count);
+            foreach (var binding in block.Bindings)
+            {
+                var newValue = SubstituteExpr(binding.Value, paramSubst, letNameMap);
+                newBindings.Add(new MapLetBinding(letNameMap[binding.Name], newValue, binding.Span));
+            }
+
+            // Rewrite result expression.
+            var newResult = SubstituteExpr(block.Result, paramSubst, letNameMap);
+            return new BlockExpr(newBindings, newResult, block.Span);
+        }
+        else
+        {
+            // Simple expression body — just substitute parameters.
+            return SubstituteExpr(map.Body, paramSubst, new Dictionary<string, string>());
+        }
+    }
+
+    /// <summary>
+    /// Recursively substitutes @map parameter references and let-binding name references
+    /// in an expression. Lambda parameters shadow both maps.
+    /// </summary>
+    private static Expression SubstituteExpr(
+        Expression expr,
+        Dictionary<string, Expression> paramSubst,
+        Dictionary<string, string> letNameMap)
+    {
+        switch (expr)
+        {
+            case IdentifierExpr id:
+                if (paramSubst.TryGetValue(id.Name, out var replacement))
+                    return replacement;
+                if (letNameMap.TryGetValue(id.Name, out var mangledName))
+                    return new IdentifierExpr(mangledName, id.Span);
+                return expr;
+
+            case FieldAccessExpr fa:
+                return new FieldAccessExpr(
+                    SubstituteExpr(fa.Object, paramSubst, letNameMap),
+                    fa.FieldName, fa.Span);
+
+            case IndexAccessExpr ia:
+                return new IndexAccessExpr(
+                    SubstituteExpr(ia.Object, paramSubst, letNameMap),
+                    SubstituteExpr(ia.Index, paramSubst, letNameMap),
+                    ia.Span);
+
+            case BinaryExpr bin:
+                return new BinaryExpr(
+                    SubstituteExpr(bin.Left, paramSubst, letNameMap),
+                    bin.Op,
+                    SubstituteExpr(bin.Right, paramSubst, letNameMap),
+                    bin.Span);
+
+            case UnaryExpr un:
+                return new UnaryExpr(
+                    un.Op,
+                    SubstituteExpr(un.Operand, paramSubst, letNameMap),
+                    un.Span);
+
+            case FunctionCallExpr fn:
+                return new FunctionCallExpr(
+                    fn.FunctionName,
+                    fn.Args.Select(a => SubstituteExpr(a, paramSubst, letNameMap)).ToList(),
+                    fn.Span);
+
+            case MethodCallExpr mc:
+                return new MethodCallExpr(
+                    SubstituteExpr(mc.Object, paramSubst, letNameMap),
+                    mc.MethodName,
+                    mc.Args.Select(a => SubstituteExpr(a, paramSubst, letNameMap)).ToList(),
+                    mc.Span);
+
+            case LambdaExpr lambda:
+            {
+                // Lambda parameter shadows param/let names.
+                var innerParamSubst = new Dictionary<string, Expression>(paramSubst);
+                innerParamSubst.Remove(lambda.Parameter);
+                var innerLetMap = new Dictionary<string, string>(letNameMap);
+                innerLetMap.Remove(lambda.Parameter);
+                return new LambdaExpr(
+                    lambda.Parameter,
+                    SubstituteExpr(lambda.Body, innerParamSubst, innerLetMap),
+                    lambda.Span);
+            }
+
+            case BlockExpr block:
+            {
+                var newBindings = block.Bindings.Select(b =>
+                    new MapLetBinding(b.Name,
+                        SubstituteExpr(b.Value, paramSubst, letNameMap),
+                        b.Span)).ToList();
+                var newResult = SubstituteExpr(block.Result, paramSubst, letNameMap);
+                return new BlockExpr(newBindings, newResult, block.Span);
+            }
+
+            // Literals and null pass through unchanged.
+            default:
+                return expr;
+        }
+    }
+
     private void EmitBinaryOp(StructEmitContext ctx, BinaryOp op)
     {
         var opcode = op switch
@@ -1360,6 +1575,14 @@ public sealed class BytecodeEmitter
 
     private void EmitFunctionCall(StructEmitContext ctx, FunctionCallExpr fn)
     {
+        // @map calls take priority over built-in functions.
+        if (_typeEnv.Maps.TryGetValue(fn.FunctionName, out var mapDecl))
+        {
+            var inlined = GetOrInlineMapCall(fn, mapDecl);
+            EmitExpression(ctx, inlined);
+            return;
+        }
+
         switch (fn.FunctionName)
         {
             // Runtime pseudo-variables (parsed as zero-arg function calls).

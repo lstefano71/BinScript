@@ -508,6 +508,9 @@ public sealed class BytecodeEmitter
                 EmitAlign(ctx, align);
                 break;
             case SkipDirective skip:
+                if (skip.ByteCount > ushort.MaxValue)
+                    throw new InvalidOperationException(
+                        $"@skip({skip.ByteCount}) exceeds the maximum of {ushort.MaxValue} bytes. Use @seek for larger offsets.");
                 ctx.Builder.Emit(Opcode.SkipFixed);
                 ctx.Builder.EmitU16((ushort)skip.ByteCount);
                 break;
@@ -789,10 +792,7 @@ public sealed class BytecodeEmitter
         ctx.Builder.EmitU16(ptrFieldId);
         if (ptr.IsRelative)
         {
-            // relptr: offset = field_position + raw_value
-            ctx.Builder.Emit(Opcode.PushConstI64);
-            ctx.Builder.EmitI64(0); // placeholder — we'd need field offset
-            // For now, use runtime field offset
+            // relptr: absolute offset = field_position + raw_value
             ctx.Builder.Emit(Opcode.FnOffsetOf);
             ctx.Builder.EmitU16(ptrFieldId);
             ctx.Builder.Emit(Opcode.OpAdd);

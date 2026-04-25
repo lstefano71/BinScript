@@ -371,6 +371,22 @@ public class BytecodeEmitterTests
         Assert.True(ContainsOpcode(program.Bytecode, Opcode.SkipFixed));
     }
 
+    [Fact]
+    public void SkipDirective_RejectsOverflow()
+    {
+        var compiler = new BinScriptCompiler();
+        // 70000 > ushort.MaxValue (65535) — must fail, not silently truncate
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            compiler.Compile("""
+                @root
+                struct Data {
+                    @skip(70000)
+                    value: u32le,
+                }
+                """, "test.bsx"));
+        Assert.Contains("65535", ex.Message);
+    }
+
     // ─── 17. @hidden field ────────────────────────────────────────────
 
     [Fact]

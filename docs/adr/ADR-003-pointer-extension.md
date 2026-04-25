@@ -86,13 +86,22 @@ Round-trip fidelity: `parse(produce(parse(data))) == parse(data)`. The binary la
 
 ### Bytecode Opcodes
 
+> **Note (2026-04-25):** The original opcodes below were superseded during implementation.
+> The current opcodes split `READ_PTR` by width (`READ_PTR_U32` 0x74, `READ_PTR_U64` 0x75),
+> replace `DEREF_BEGIN`/`DEREF_END` with existing `SEEK_PUSH`/`SEEK_POP`,
+> replace `WRITE_PTR` with `COPY_CHILD_FIELD` (0x77),
+> and replace `NULL_CHECK` with `EMIT_NULL` (0x76).
+> See `docs/BYTECODE.md` for the current instruction set.
+
+*Original design (for historical context):*
+
 | Opcode | Hex | Operands | Description |
 |--------|-----|----------|-------------|
-| `READ_PTR` | 0x74 | field_id:u16, width:u8, mode:u8 | Read pointer, compute buffer offset |
-| `DEREF_BEGIN` | 0x75 | — | Push position, seek to deref target |
-| `DEREF_END` | 0x76 | — | Pop position, restore cursor |
-| `WRITE_PTR` | 0x77 | field_id:u16, width:u8, mode:u8 | Write computed pointer value |
-| `NULL_CHECK` | 0x7A | — | Pop value, push bool (true if zero/null) |
+| ~~`READ_PTR`~~ | 0x74 | field_id:u16, width:u8, mode:u8 | Read pointer, compute buffer offset |
+| ~~`DEREF_BEGIN`~~ | 0x75 | — | Push position, seek to deref target |
+| ~~`DEREF_END`~~ | 0x76 | — | Pop position, restore cursor |
+| ~~`WRITE_PTR`~~ | 0x77 | field_id:u16, width:u8, mode:u8 | Write computed pointer value |
+| ~~`NULL_CHECK`~~ | 0x7A | — | Pop value, push bool (true if zero/null) |
 
 `mode`: 0 = absolute (ptr), 1 = relative (relptr).
 

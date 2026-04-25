@@ -16,6 +16,9 @@
   - Pure Python 3.10+ stdlib (no pip dependencies)
   - Full documentation in `tools/bsxtool/README.md` with maintenance checklist
 
+### Fixed
+- **@skip overflow** — `@skip(N)` where N > 65535 now raises a compile-time error instead of silently truncating to `N & 0xFFFF`
+
 ### Documentation
 - **BYTECODE.md** — Comprehensive update to match actual implementation:
   - Added §3.0 Tagged Inline Literals section documenting the type_tag encoding used by `ASSERT_VALUE`, `MATCH_ARM_EQ`, `MATCH_ARM_RANGE`

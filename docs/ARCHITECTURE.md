@@ -373,9 +373,7 @@ A stack-based evaluator for bytecode expressions. Supports:
 
 ### 5.4 Recursion Depth Tracking
 
-For structs involved in recursive reference cycles (detected by the compiler via SCC analysis), the runtime maintains per-struct depth counters in the `ParseContext` / `ProduceContext`. The `DEPTH_CHECK` opcode increments the counter and raises a runtime error if the limit is exceeded. `DEPTH_POP` decrements it on return.
-
-The default limit is 256. Scripts can override this with `@max_depth(N)` on the struct declaration, which the compiler encodes into the `DEPTH_CHECK` operand.
+> **Note:** The original design used dedicated `DEPTH_CHECK` / `DEPTH_POP` opcodes for per-struct depth tracking. These were removed during implementation — the current approach relies on the call stack depth limit inherent in the struct call mechanism. Circular structures are deferred for v1 (see ADR-002), so explicit depth tracking is not currently needed.
 
 ## 6. Thread Safety Model
 

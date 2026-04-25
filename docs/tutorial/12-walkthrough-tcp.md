@@ -53,7 +53,7 @@ struct Ipv4Packet {
     header_checksum: u16,
     src_ip: u32,
     dst_ip: u32,
-    @skip(header_length - 20)
+    @hidden options: bytes[header_length - 20],
     body: match(protocol) {
         6 => TcpSegment,
         17 => UdpDatagram,
@@ -117,22 +117,16 @@ version_ihl: u8,
 @derived ihl: u8 = version_ihl & 0x0F @hidden,
 ```
 
-### Computed Skip
+### Skipping Variable-Length Data
 
-IPv4 options are variable-length. We compute how many bytes to skip:
+IPv4 options are variable-length. Rather than `@skip` (literal-only) or `@seek`, we use a hidden `bytes` field with a computed length:
 
 ```
 @derived header_length: u8 = ihl * 4 @hidden,
-@skip(header_length - 20)
+@hidden options: bytes[header_length - 20],
 ```
 
-⚠️ Wait — `@skip` only accepts literals! So we'd actually use:
-
-```
-@seek(@offset + header_length - 20)
-```
-
-This is exactly the pattern the `@skip` limitation anticipates. The `@seek` workaround is clean and explicit.
+This is the idiomatic BinScript pattern for skipping a dynamic number of bytes — it reads and discards them, advancing the cursor naturally. If you later want to inspect the options, just remove `@hidden`.
 
 ### Protocol Dispatch
 

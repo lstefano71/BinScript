@@ -146,3 +146,7 @@ __pycache__/
 *~
 *.bak
 *.cache
+
+tools/examples/**/*.bsc
+tools/examples/**/*.exe
+tools/examples/**/*.bmp

@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-04-25 22:33
+
+### Added
+- **tools/examples/c/parse_bmp.c** — Standalone C example demonstrating BMP parsing and round-trip production via the BinScript C-ABI DLL. Uses dynamic loading (LoadLibrary/dlopen) for full portability — no static linking needed. Auto-discovers the NativeAOT DLL by walking up from CWD or via `BINSCRIPT_DLL` env var. Compiles `stdlib/bmp.bsx`, parses a BMP file to JSON, produces a round-trip binary (verifying header byte-for-byte match), and saves compiled bytecode to `.bsc`. Cross-platform (Windows/Linux/macOS).
+- **tools/examples/c/Makefile** — Build helper for MSVC (nmake) and GCC (make) with `run` and `clean` targets.
+
+## 2026-04-25 22:28
+
+### Added
+- **tools/examples/python/parse_gif.py** — Standalone Python example demonstrating GIF parsing via the BinScript C-ABI DLL. Uses only stdlib (ctypes, json, pathlib). Auto-discovers the NativeAOT DLL, compiles `stdlib/gif.bsx`, parses a GIF file, prints a human-friendly summary, outputs full JSON, and saves compiled bytecode. Tested with both GIF87a single-frame and GIF89a animated samples.
+
 ## 2026-04-25 22:24
 
 ### Changed

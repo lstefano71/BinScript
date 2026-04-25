@@ -5,6 +5,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using BinScript.Core.Api;
 using BinScript.Core.Bytecode;
+using BinScript.Core.Model;
 using BinScript.Emitters.Json;
 
 /// <summary>
@@ -173,7 +174,8 @@ public static unsafe class NativeExports
             if (program is null) { ErrorState.Set("Invalid program handle"); return null; }
 
             var input = new ReadOnlyMemory<byte>(new ReadOnlySpan<byte>(data, (int)len).ToArray());
-            string json = program.ToJson(input);
+            var options = BuildParseOptions(paramsJson);
+            string json = program.ToJson(input, options);
             return AllocUtf8(json);
         }
         catch (Exception ex)
@@ -194,7 +196,8 @@ public static unsafe class NativeExports
 
             string entryPoint = Marshal.PtrToStringUTF8((IntPtr)entry) ?? "";
             var input = new ReadOnlyMemory<byte>(new ReadOnlySpan<byte>(data, (int)len).ToArray());
-            string json = program.ToJson(input, entryPoint);
+            var options = BuildParseOptions(paramsJson);
+            string json = program.ToJson(input, entryPoint, options);
             return AllocUtf8(json);
         }
         catch (Exception ex)
@@ -304,6 +307,30 @@ public static unsafe class NativeExports
             return null;
 
         return ParseFlatJsonObject(json);
+    }
+
+    /// <summary>
+    /// Build a <see cref="ParseOptions"/> from a native <c>params_json</c> pointer.
+    /// Returns null when no parameters are provided.
+    /// </summary>
+    private static ParseOptions? BuildParseOptions(byte* paramsJson)
+    {
+        var raw = ParseParametersJson(paramsJson);
+        if (raw is null || raw.Count == 0)
+            return null;
+
+        var runtimeParams = new Dictionary<string, long>();
+        foreach (var (key, value) in raw)
+        {
+            runtimeParams[key] = value switch
+            {
+                long l => l,
+                int i => i,
+                double d => (long)d,
+                _ => Convert.ToInt64(value),
+            };
+        }
+        return new ParseOptions { RuntimeParameters = runtimeParams };
     }
 
     /// <summary>

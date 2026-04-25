@@ -31,9 +31,13 @@ public static class BinScriptProgramJsonExtensions
 
     /// <summary>Parse and return JSON using a named entry point.</summary>
     public static string ToJson(this BinScriptProgram program, ReadOnlyMemory<byte> input, string entryPoint)
+        => ToJson(program, input, entryPoint, null);
+
+    /// <summary>Parse and return JSON using a named entry point with runtime options.</summary>
+    public static string ToJson(this BinScriptProgram program, ReadOnlyMemory<byte> input, string entryPoint, ParseOptions? options)
     {
         using var emitter = new JsonResultEmitter();
-        var result = program.Parse(input, entryPoint, emitter);
+        var result = program.Parse(input, entryPoint, emitter, options);
         if (!result.Success)
         {
             var errors = string.Join("; ", result.Diagnostics

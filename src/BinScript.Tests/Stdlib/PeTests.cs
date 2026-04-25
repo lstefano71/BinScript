@@ -42,7 +42,7 @@ public class PeTests
         Assert.True(sections.GetArrayLength() >= 1);
     }
 
-    [Fact(Skip = "Requires compiler support for @map, @max_depth, parameterized structs, when guards")]
+    [Fact]
     public void Parse_TinyX86_Exe()
     {
         var program = CompileScript("pe.bsx");
@@ -61,7 +61,7 @@ public class PeTests
         Assert.Equal(1, coff.GetProperty("number_of_sections").GetInt64());
     }
 
-    [Fact(Skip = "Requires compiler support for @map, @max_depth, parameterized structs, when guards")]
+    [Fact]
     public void Parse_TinyDll()
     {
         var program = CompileScript("pe.bsx");

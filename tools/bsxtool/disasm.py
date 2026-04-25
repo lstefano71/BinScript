@@ -484,9 +484,8 @@ def _dec_match_arm_range(bc: bytes, ip: int, prog: BscProgram) -> tuple[str, int
     return f"lo={lo_str}, hi={hi_str}, jump={jump:+d} → @{target}", consumed
 
 def _dec_match_arm_guard(bc: bytes, ip: int, prog: BscProgram) -> tuple[str, int]:
-    jump = struct.unpack_from("<i", bc, ip)[0]
-    target = (ip + 4) + jump
-    return f"jump={jump:+d} → @{target}", 4
+    fid = struct.unpack_from("<H", bc, ip)[0]
+    return f"binder_field={fid}", 2
 
 def _dec_match_default(bc: bytes, ip: int, prog: BscProgram) -> tuple[str, int]:
     jump = struct.unpack_from("<i", bc, ip)[0]

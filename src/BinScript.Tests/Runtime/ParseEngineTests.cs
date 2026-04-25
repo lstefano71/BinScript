@@ -1268,6 +1268,104 @@ public class ParseEngineTests
         Assert.Equal("ok", doc.RootElement.GetProperty("name").GetString());
     }
 
+    // ─── relptr regression ────────────────────────────────────────────
+
+    [Fact]
+    public void RelPtr_U32_PointsToNestedStruct()
+    {
+        var program = Compile("""
+            @default_endian(little)
+            @root struct Container {
+                target: relptr<Data, u32>,
+                filler: u8,
+            }
+            struct Data {
+                value: u32,
+            }
+            """);
+
+        // Byte 0-3: relptr raw=5 (field at 0, absolute=0+5=5)
+        // Byte 4:   filler=0xFF
+        // Byte 5-8: Data.value=0x12345678
+        byte[] data = [0x05, 0x00, 0x00, 0x00, 0xFF, 0x78, 0x56, 0x34, 0x12];
+
+        var json = ParseToJson(program, data);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal(305419896, doc.RootElement.GetProperty("target").GetProperty("value").GetInt64());
+        Assert.Equal(255, doc.RootElement.GetProperty("filler").GetInt32());
+    }
+
+    [Fact]
+    public void RelPtr_U32_NonZeroFieldOffset()
+    {
+        var program = Compile("""
+            @default_endian(little)
+            @root struct Container {
+                header: u16,
+                target: relptr<Data, u32>,
+                filler: u8,
+            }
+            struct Data {
+                value: u32,
+            }
+            """);
+
+        // Byte 0-1: header=1
+        // Byte 2-5: relptr raw=5 (field at 2, absolute=2+5=7)
+        // Byte 6:   filler=0xFF
+        // Byte 7-10: Data.value=0xDEADBEEF
+        byte[] data = [0x01, 0x00, 0x05, 0x00, 0x00, 0x00, 0xFF, 0xEF, 0xBE, 0xAD, 0xDE];
+
+        var json = ParseToJson(program, data);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal(1, doc.RootElement.GetProperty("header").GetInt32());
+        Assert.Equal(0xDEADBEEF, doc.RootElement.GetProperty("target").GetProperty("value").GetUInt64());
+    }
+
+    [Fact]
+    public void RelPtr_NullableRelPtr_ZeroIsNull()
+    {
+        var program = Compile("""
+            @default_endian(little)
+            @root struct Container {
+                target: relptr<Data, u32>?,
+            }
+            struct Data {
+                value: u32,
+            }
+            """);
+
+        byte[] data = [0x00, 0x00, 0x00, 0x00];
+
+        var json = ParseToJson(program, data);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal(JsonValueKind.Null, doc.RootElement.GetProperty("target").ValueKind);
+    }
+
+    [Fact]
+    public void RelPtr_NullableRelPtr_NonZeroResolves()
+    {
+        var program = Compile("""
+            @default_endian(little)
+            @root struct Container {
+                target: relptr<Data, u32>?,
+                filler: u8,
+            }
+            struct Data {
+                value: u32,
+            }
+            """);
+
+        // Byte 0-3: relptr raw=5 (field at 0, absolute=0+5=5)
+        // Byte 4:   filler=0xFF
+        // Byte 5-8: Data.value=42
+        byte[] data = [0x05, 0x00, 0x00, 0x00, 0xFF, 0x2A, 0x00, 0x00, 0x00];
+
+        var json = ParseToJson(program, data);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal(42, doc.RootElement.GetProperty("target").GetProperty("value").GetInt32());
+    }
+
     // ─── Dotted field access ──────────────────────────────────────────
 
     [Fact]
@@ -1614,5 +1712,166 @@ struct Section {
         using var doc = JsonDocument.Parse(json);
         Assert.Equal(0xCC, doc.RootElement.GetProperty("val1").GetInt64());
         Assert.Equal(0xDD, doc.RootElement.GetProperty("val2").GetInt64());
+    }
+
+    // ─── Guard arm tests ─────────────────────────────────────────────
+
+    [Fact]
+    public void MatchGuardArm_StartsWithTrue_SelectsGuardedArm()
+    {
+        var program = Compile("""
+            @root struct Data {
+                tag: fixed_string[4],
+                body: match(tag) {
+                    s when s.starts_with("AB") => u32le,
+                    _ => u16le,
+                }
+            }
+            """);
+        // tag = "ABCD", body should match guard arm → u32le
+        byte[] data = [(byte)'A', (byte)'B', (byte)'C', (byte)'D', 0x78, 0x56, 0x34, 0x12];
+        var json = ParseToJson(program, data);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal(0x12345678, doc.RootElement.GetProperty("body").GetInt64());
+    }
+
+    [Fact]
+    public void MatchGuardArm_StartsWithFalse_FallsToDefault()
+    {
+        var program = Compile("""
+            @root struct Data {
+                tag: fixed_string[4],
+                body: match(tag) {
+                    s when s.starts_with("AB") => u32le,
+                    _ => u16le,
+                }
+            }
+            """);
+        // tag = "XYZW", guard fails → falls to default u16le
+        byte[] data = [(byte)'X', (byte)'Y', (byte)'Z', (byte)'W', 0x34, 0x12];
+        var json = ParseToJson(program, data);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal(0x1234, doc.RootElement.GetProperty("body").GetInt64());
+    }
+
+    [Fact]
+    public void MatchGuardArm_MultipleGuards_FirstMatchWins()
+    {
+        var program = Compile("""
+            @root struct Data {
+                tag: fixed_string[4],
+                body: match(tag) {
+                    s when s.starts_with("AA") => u8,
+                    s when s.starts_with("BB") => u16le,
+                    _ => u32le,
+                }
+            }
+            """);
+        // tag = "BBZZ" → second guard matches → u16le
+        byte[] data = [(byte)'B', (byte)'B', (byte)'Z', (byte)'Z', 0xAB, 0xCD];
+        var json = ParseToJson(program, data);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal(0xCDAB, doc.RootElement.GetProperty("body").GetInt64());
+    }
+
+    [Fact]
+    public void MatchGuardArm_AllGuardsFail_FallsToDefault()
+    {
+        var program = Compile("""
+            @root struct Data {
+                tag: fixed_string[4],
+                body: match(tag) {
+                    s when s.starts_with("AA") => u8,
+                    s when s.starts_with("BB") => u16le,
+                    _ => u32le,
+                }
+            }
+            """);
+        // tag = "ZZZZ" → both guards fail → default u32le
+        byte[] data = [(byte)'Z', (byte)'Z', (byte)'Z', (byte)'Z', 0x11, 0x22, 0x33, 0x44];
+        var json = ParseToJson(program, data);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal(0x44332211, doc.RootElement.GetProperty("body").GetInt64());
+    }
+
+    [Fact]
+    public void MatchGuardArm_GuardWithEqComparison()
+    {
+        var program = Compile("""
+            @root struct Data {
+                tag: fixed_string[2],
+                body: match(tag) {
+                    s when s == "OK" => u32le,
+                    _ => u8,
+                }
+            }
+            """);
+        // tag = "OK" → guard matches → u32le
+        byte[] data = [(byte)'O', (byte)'K', 0x78, 0x56, 0x34, 0x12];
+        var json = ParseToJson(program, data);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal(0x12345678, doc.RootElement.GetProperty("body").GetInt64());
+    }
+
+    [Fact]
+    public void MatchGuardArm_ContainsMethod()
+    {
+        var program = Compile("""
+            @root struct Data {
+                tag: fixed_string[6],
+                body: match(tag) {
+                    s when s.contains("MID") => u32le,
+                    _ => u8,
+                }
+            }
+            """);
+        // tag = "AMIDBC" → guard matches → u32le
+        byte[] data = [(byte)'A', (byte)'M', (byte)'I', (byte)'D', (byte)'B', (byte)'C', 0xDE, 0xAD, 0xBE, 0xEF];
+        var json = ParseToJson(program, data);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal(0xEFBEADDE, doc.RootElement.GetProperty("body").GetInt64());
+    }
+
+    [Fact]
+    public void MatchGuardArm_ValuePatternWithGuard()
+    {
+        // Test ValuePattern + guard: value check first, then guard
+        var program = Compile("""
+            @root struct Data {
+                version: u8,
+                flags: u8,
+                body: match(version) {
+                    1 when flags > 0 => u32le,
+                    1 => u16le,
+                    _ => u8,
+                }
+            }
+            """);
+        // version=1, flags=5 → first arm (value matches AND guard true) → u32le
+        byte[] data = [0x01, 0x05, 0x78, 0x56, 0x34, 0x12];
+        var json = ParseToJson(program, data);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal(0x12345678, doc.RootElement.GetProperty("body").GetInt64());
+    }
+
+    [Fact]
+    public void MatchGuardArm_ValuePatternGuardFails_FallsToSameValue()
+    {
+        var program = Compile("""
+            @root struct Data {
+                version: u8,
+                flags: u8,
+                body: match(version) {
+                    1 when flags > 0 => u32le,
+                    1 => u16le,
+                    _ => u8,
+                }
+            }
+            """);
+        // version=1, flags=0 → first arm value matches but guard fails → second arm (value 1) matches → u16le
+        byte[] data = [0x01, 0x00, 0x34, 0x12];
+        var json = ParseToJson(program, data);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal(0x1234, doc.RootElement.GetProperty("body").GetInt64());
     }
 }

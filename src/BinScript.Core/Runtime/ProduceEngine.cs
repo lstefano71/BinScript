@@ -288,7 +288,8 @@ public sealed class ProduceEngine
                   byte ht = bytecode[ip++]; long hi = 0;
                   switch (ht) { case 0: hi = BinaryPrimitives.ReadInt64LittleEndian(bytecode.AsSpan(ip, 8)); ip += 8; break; case 2: ip += 2; break; case 3: ip++; break; }
                   int st = ReadI32(bytecode, ref ip); long dv = d.AsLong(); if (dv < lo || dv > hi) ip = baseOffset + st; break; }
-                case Opcode.MatchArmGuard: { ReadI32(bytecode, ref ip); break; }
+                case Opcode.MatchArmGuard:
+                { ushort gfid = ReadU16(bytecode, ref ip); fieldTable.SetValue(gfid, ctx.Peek()); break; }
                 case Opcode.MatchDefault: { ReadI32(bytecode, ref ip); break; }
                 case Opcode.MatchEnd: if (ctx.EvalStackCount > 0) ctx.Pop(); break;
                 case Opcode.Align:
@@ -613,7 +614,8 @@ public sealed class ProduceEngine
                   byte ht = bytecode[ip++]; long hi = 0;
                   switch (ht) { case 0: hi = BinaryPrimitives.ReadInt64LittleEndian(bytecode.AsSpan(ip, 8)); ip += 8; break; case 2: ip += 2; break; case 3: ip++; break; }
                   int st = ReadI32(bytecode, ref ip); long dv = d.AsLong(); if (dv < lo || dv > hi) ip = baseOffset + st; break; }
-                case Opcode.MatchArmGuard: { ReadI32(bytecode, ref ip); break; }
+                case Opcode.MatchArmGuard:
+                { ushort gfid = ReadU16(bytecode, ref ip); fieldTable.SetValue(gfid, ctx.Peek()); break; }
                 case Opcode.MatchDefault: { ReadI32(bytecode, ref ip); break; }
                 case Opcode.MatchEnd: if (ctx.EvalStackCount > 0) ctx.Pop(); break;
                 case Opcode.Align:
@@ -686,7 +688,8 @@ public sealed class ProduceEngine
             Opcode.MatchBegin or Opcode.MatchEnd => 0,
             Opcode.MatchArmEq => ComputeMatchArmEqSize(bytecode, ip),
             Opcode.MatchArmRange => ComputeMatchArmRangeSize(bytecode, ip),
-            Opcode.MatchArmGuard or Opcode.MatchDefault => 4,
+            Opcode.MatchArmGuard => 2,
+            Opcode.MatchDefault => 4,
             Opcode.Align => 0, Opcode.AlignFixed => 2,
             _ => 0,
         };

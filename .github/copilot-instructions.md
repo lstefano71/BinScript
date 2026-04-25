@@ -23,7 +23,7 @@ Requires **.NET 10 SDK** with C# 14 preview (`LangVersion preview`). All project
 
 ## Architecture
 
-docs/PRD.md is the original product requirements document describing the motivation and goals of the project.
+docs/PRD.md is the original product requirements document describing the motivation and, importantly, the goals of the project.
 
 docs/ARCHITECTURE.md describes the overall architecture and design patterns of
 
@@ -118,3 +118,5 @@ Full .bsx syntax at docs/LANGUAGE_SPEC.md
 - when big decisions are taken write an ADR and link it in the architecture document
 - try and keep a changelog with items including a timestamp
 - in case of changes including but not limited to the addition of bytecode instructions, changes to the runtime engines, or modifications to the plugin interfaces, update the relevant documentation files in the `docs/` folder to reflect these changes.
+- we don't need to be backward compatible at this stage: there are no existing users to the library, so feel free to make breaking changes without worrying about versioning or deprecation. However, make sure to update the documentation and tests accordingly to reflect any breaking changes.
+- make sure the C ABI layer, which is the final output the project is meant to provide, is kept up-to-date, well-documented and tested, as this is the primary interface that users will interact with.

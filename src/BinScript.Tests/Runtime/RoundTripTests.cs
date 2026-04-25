@@ -250,4 +250,50 @@ public class RoundTripTests
 
         Assert.Equal(original, produced);
     }
+
+    // ─── Guard arm round-trip ────────────────────────────────────────
+
+    [Fact]
+    public void RoundTrip_MatchGuardArm()
+    {
+        var bytecode = Compile("""
+            @root struct Data {
+                version: u8,
+                flags: u8,
+                body: match(version) {
+                    1 when flags > 0 => u32le,
+                    1 => u16le,
+                    _ => u8,
+                }
+            }
+            """);
+        var program = new BinScriptProgram(bytecode);
+
+        // version=1, flags=5 → guarded arm → u32le
+        byte[] original = [0x01, 0x05, 0x78, 0x56, 0x34, 0x12];
+        byte[] produced = RoundTrip(program, original);
+        Assert.Equal(original, produced);
+    }
+
+    [Fact]
+    public void RoundTrip_MatchGuardArmFallthrough()
+    {
+        var bytecode = Compile("""
+            @root struct Data {
+                version: u8,
+                flags: u8,
+                body: match(version) {
+                    1 when flags > 0 => u32le,
+                    1 => u16le,
+                    _ => u8,
+                }
+            }
+            """);
+        var program = new BinScriptProgram(bytecode);
+
+        // version=1, flags=0 → guard fails → plain value match → u16le
+        byte[] original = [0x01, 0x00, 0x34, 0x12];
+        byte[] produced = RoundTrip(program, original);
+        Assert.Equal(original, produced);
+    }
 }

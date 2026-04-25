@@ -207,35 +207,143 @@ public static unsafe class NativeExports
         }
     }
 
-    // ── Produce: JSON → Binary (stubs) ───────────────────────────
+    // ── Produce: JSON → Binary ──────────────────────────────────
 
     [UnmanagedCallersOnly(EntryPoint = "binscript_from_json_static_size")]
     public static long FromJsonStaticSize(IntPtr scriptHandle, byte* entry)
     {
-        ErrorState.Set("Not yet implemented");
-        return -1;
+        try
+        {
+            ErrorState.Clear();
+            var program = HandleTable.Get<BinScriptProgram>(scriptHandle);
+            if (program is null) { ErrorState.Set("Invalid program handle"); return -1; }
+
+            int structIndex;
+            if (entry != null)
+            {
+                string entryName = Marshal.PtrToStringUTF8((IntPtr)entry) ?? "";
+                structIndex = program.Bytecode.FindStructIndex(entryName);
+                if (structIndex < 0) { ErrorState.Set($"Struct '{entryName}' not found."); return -1; }
+            }
+            else
+            {
+                structIndex = program.Bytecode.RootStructIndex;
+                if (structIndex < 0) { ErrorState.Set("No @root struct found."); return -1; }
+            }
+
+            return program.Bytecode.Structs[structIndex].StaticSize;
+        }
+        catch (Exception ex)
+        {
+            ErrorState.Set(ex.Message);
+            return -1;
+        }
     }
 
     [UnmanagedCallersOnly(EntryPoint = "binscript_from_json_calc_size")]
     public static long FromJsonCalcSize(IntPtr scriptHandle, byte* json, byte* paramsJson)
     {
-        ErrorState.Set("Not yet implemented");
-        return -1;
+        try
+        {
+            ErrorState.Clear();
+            var program = HandleTable.Get<BinScriptProgram>(scriptHandle);
+            if (program is null) { ErrorState.Set("Invalid program handle"); return -1; }
+
+            string jsonStr = Marshal.PtrToStringUTF8((IntPtr)json) ?? "";
+            var options = BuildParseOptions(paramsJson);
+
+            using var dataSource = new JsonDataSource(jsonStr);
+            var result = program.ProduceAlloc(dataSource, options);
+            if (!result.Success)
+            {
+                var errors = string.Join("; ", result.Diagnostics
+                    .Where(d => d.Severity == Core.Model.DiagnosticSeverity.Error)
+                    .Select(d => d.Message));
+                ErrorState.Set($"Produce failed: {errors}");
+                return -1;
+            }
+
+            return result.BytesWritten;
+        }
+        catch (Exception ex)
+        {
+            ErrorState.Set(ex.Message);
+            return -1;
+        }
     }
 
     [UnmanagedCallersOnly(EntryPoint = "binscript_from_json_into")]
     public static long FromJsonInto(IntPtr scriptHandle, byte* buf, nuint bufLen, byte* json, byte* paramsJson)
     {
-        ErrorState.Set("Not yet implemented");
-        return -1;
+        try
+        {
+            ErrorState.Clear();
+            var program = HandleTable.Get<BinScriptProgram>(scriptHandle);
+            if (program is null) { ErrorState.Set("Invalid program handle"); return -1; }
+
+            string jsonStr = Marshal.PtrToStringUTF8((IntPtr)json) ?? "";
+            var options = BuildParseOptions(paramsJson);
+
+            using var dataSource = new JsonDataSource(jsonStr);
+            var result = program.ProduceAlloc(dataSource, options);
+            if (!result.Success)
+            {
+                var errors = string.Join("; ", result.Diagnostics
+                    .Where(d => d.Severity == Core.Model.DiagnosticSeverity.Error)
+                    .Select(d => d.Message));
+                ErrorState.Set($"Produce failed: {errors}");
+                return -1;
+            }
+
+            if ((long)bufLen < result.BytesWritten)
+                return -2; // buffer too small
+
+            result.OutputBytes!.CopyTo(new Span<byte>(buf, (int)result.BytesWritten));
+            return result.BytesWritten;
+        }
+        catch (Exception ex)
+        {
+            ErrorState.Set(ex.Message);
+            return -1;
+        }
     }
 
     [UnmanagedCallersOnly(EntryPoint = "binscript_from_json")]
     public static byte* FromJson(IntPtr scriptHandle, byte* json, nuint* outLen, byte* paramsJson)
     {
-        ErrorState.Set("Not yet implemented");
-        if (outLen != null) *outLen = 0;
-        return null;
+        try
+        {
+            ErrorState.Clear();
+            var program = HandleTable.Get<BinScriptProgram>(scriptHandle);
+            if (program is null) { ErrorState.Set("Invalid program handle"); if (outLen != null) *outLen = 0; return null; }
+
+            string jsonStr = Marshal.PtrToStringUTF8((IntPtr)json) ?? "";
+            var options = BuildParseOptions(paramsJson);
+
+            using var dataSource = new JsonDataSource(jsonStr);
+            var result = program.ProduceAlloc(dataSource, options);
+            if (!result.Success)
+            {
+                var errors = string.Join("; ", result.Diagnostics
+                    .Where(d => d.Severity == Core.Model.DiagnosticSeverity.Error)
+                    .Select(d => d.Message));
+                ErrorState.Set($"Produce failed: {errors}");
+                if (outLen != null) *outLen = 0;
+                return null;
+            }
+
+            var data = result.OutputBytes!;
+            byte* native = (byte*)NativeMemory.Alloc((nuint)data.Length);
+            data.CopyTo(new Span<byte>(native, data.Length));
+            if (outLen != null) *outLen = (nuint)data.Length;
+            return native;
+        }
+        catch (Exception ex)
+        {
+            ErrorState.Set(ex.Message);
+            if (outLen != null) *outLen = 0;
+            return null;
+        }
     }
 
     // ── Memory management ────────────────────────────────────────

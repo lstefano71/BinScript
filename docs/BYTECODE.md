@@ -205,10 +205,10 @@ These instructions handle flat, sequential struct reads with no control flow. A 
 | `SENTINEL_SAVE` | 0xDC | — | Save emitter checkpoint before reading a sentinel-guarded element |
 | `SENTINEL_CHECK` | 0xDD | — | Pop bool; if true, rollback emitter to checkpoint and break the enclosing array loop |
 | **Match** | | | |
-| `MATCH_BEGIN` | 0xE0 | — | Begin match block. Discriminant must already be on the stack |
+| `MATCH_BEGIN` | 0xE0 | — | Begin match block. Discriminant must already be on the stack. No arm_count operand — arms are dispatched linearly via jump-chain pattern, which is efficient for the typical ≤20 arms and allows heterogeneous arm types (EQ/RANGE/GUARD/DEFAULT) |
 | `MATCH_ARM_EQ` | 0xE1 | tagged_literal, jump:i32 | If discriminant equals the tagged literal value, jump to the arm body. Uses tagged inline literal encoding (see §3.0) |
 | `MATCH_ARM_RANGE` | 0xE2 | lo:tagged_literal, hi:tagged_literal, jump:i32 | If lo ≤ discriminant ≤ hi, jump. Both bounds use tagged inline literals |
-| `MATCH_ARM_GUARD` | 0xE3 | jump:i32 | Guard arm — currently acts as unconditional jump (guard expression evaluation is not yet implemented) |
+| `MATCH_ARM_GUARD` | 0xE3 | field_id:u16 | Guard arm binder — peeks discriminant from eval stack, stores to field_id. Guard expression bytecode + `JUMP_IF_FALSE` follow inline. |
 | `MATCH_DEFAULT` | 0xE4 | jump:i32 | Default arm |
 | `MATCH_END` | 0xE5 | — | End match block |
 | **Alignment** | | | |

@@ -1173,9 +1173,12 @@ public sealed class ParseEngine
                 }
                 case Opcode.MatchArmGuard:
                 {
-                    int skipTarget3 = ReadI32(bytecode, ref ip);
-                    // Guard: would need to evaluate a condition expression.
-                    // For now, just fall through (treat as default).
+                    // Read field_id, peek discriminant from stack, store it to
+                    // the hidden field so the guard expression can reference it.
+                    ushort guardFieldId = ReadU16(bytecode, ref ip);
+                    var disc = ctx.Peek();
+                    fieldTable.SetValue(guardFieldId, disc);
+                    // Guard expression bytecode + JumpIfFalse follow inline.
                     break;
                 }
                 case Opcode.MatchDefault:
@@ -1340,7 +1343,7 @@ public sealed class ParseEngine
             Opcode.MatchBegin or Opcode.MatchEnd => 0,
             Opcode.MatchArmEq => ComputeMatchArmEqSize(bytecode, ip),
             Opcode.MatchArmRange => ComputeMatchArmRangeSize(bytecode, ip),
-            Opcode.MatchArmGuard => 4,
+            Opcode.MatchArmGuard => 2,
             Opcode.MatchDefault => 4,
 
             Opcode.Align => 0,

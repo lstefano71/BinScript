@@ -30,28 +30,48 @@ public sealed class BytecodeBuilder
     {
         Span<byte> buf = stackalloc byte[4];
         BinaryPrimitives.WriteInt32LittleEndian(buf, value);
-        _bytes.AddRange(buf.ToArray()); // TODO: optimize
+        _bytes.Add(buf[0]);
+        _bytes.Add(buf[1]);
+        _bytes.Add(buf[2]);
+        _bytes.Add(buf[3]);
     }
 
     public void EmitU32(uint value)
     {
         Span<byte> buf = stackalloc byte[4];
         BinaryPrimitives.WriteUInt32LittleEndian(buf, value);
-        _bytes.AddRange(buf.ToArray());
+        _bytes.Add(buf[0]);
+        _bytes.Add(buf[1]);
+        _bytes.Add(buf[2]);
+        _bytes.Add(buf[3]);
     }
 
     public void EmitI64(long value)
     {
         Span<byte> buf = stackalloc byte[8];
         BinaryPrimitives.WriteInt64LittleEndian(buf, value);
-        _bytes.AddRange(buf.ToArray());
+        _bytes.Add(buf[0]);
+        _bytes.Add(buf[1]);
+        _bytes.Add(buf[2]);
+        _bytes.Add(buf[3]);
+        _bytes.Add(buf[4]);
+        _bytes.Add(buf[5]);
+        _bytes.Add(buf[6]);
+        _bytes.Add(buf[7]);
     }
 
     public void EmitF64(double value)
     {
         Span<byte> buf = stackalloc byte[8];
         BinaryPrimitives.WriteDoubleLittleEndian(buf, value);
-        _bytes.AddRange(buf.ToArray());
+        _bytes.Add(buf[0]);
+        _bytes.Add(buf[1]);
+        _bytes.Add(buf[2]);
+        _bytes.Add(buf[3]);
+        _bytes.Add(buf[4]);
+        _bytes.Add(buf[5]);
+        _bytes.Add(buf[6]);
+        _bytes.Add(buf[7]);
     }
 
     /// <summary>Intern a string and return its index in the string table.</summary>

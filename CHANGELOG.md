@@ -1,6 +1,18 @@
 # Changelog
 
-## 2026-04-25
+## 2025-07-23
+
+### Added
+- **Match guard arms** — Full implementation of `IdentifierPattern` with guard expressions in match blocks (`s when s.starts_with("AB") => Type`). Guard expressions are emitted as inline bytecode followed by `JUMP_IF_FALSE`, enabling conditional type dispatch based on string methods (`.starts_with()`, `.ends_with()`, `.contains()`), comparisons, and arbitrary expressions. Previously, guard arms compiled but were silently treated as unconditional defaults at runtime.
+- **ValuePattern + guard** — Match arms like `1 when flags > 0 => Type` now correctly evaluate both the value check and the guard condition, falling through to subsequent arms when the guard fails.
+- Added 10 new tests: 8 parse engine tests covering guard arms (string methods, equality, multiple guards, fallthrough, value+guard) and 2 round-trip tests.
+
+### Changed
+- **`MATCH_ARM_GUARD` opcode** — Changed from `jump:i32` (4 bytes) to `field_id:u16` (2 bytes). The opcode now peeks the discriminant from the eval stack and stores it to a hidden field so the guard expression can reference the discriminant by name. Conditional skip logic is handled by inline `JUMP_IF_FALSE`.
+- Updated BYTECODE.md with `MATCH_ARM_GUARD` new operand format and `MATCH_BEGIN` design rationale.
+- Updated `disasm.py` opcode decoder for new operand format.
+
+## 2025-04-25
 
 ### Added
 - **bsxtool** — Python CLI tool exercising the BinScript C-ABI DLL (`tools/bsxtool/`):

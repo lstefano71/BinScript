@@ -1017,6 +1017,19 @@ public sealed class BytecodeEmitter
     {
         var match = matchType.Match;
 
+        // Pre-scan: allocate hidden fields for IdentifierPattern guard binders.
+        // Each unique binder name (e.g., "s" in "s when s.starts_with(...)") gets
+        // a hidden field so the guard expression can reference the discriminant by name.
+        var guardBinderFields = new Dictionary<string, ushort>();
+        foreach (var arm in match.Arms)
+        {
+            if (arm.Pattern is IdentifierPattern ip && arm.Guard is not null
+                && !guardBinderFields.ContainsKey(ip.Name))
+            {
+                guardBinderFields[ip.Name] = ctx.AllocateHiddenField($"_guard_{ip.Name}", _masterBuilder);
+            }
+        }
+
         // Evaluate discriminant and push on stack.
         EmitExpression(ctx, match.Discriminant);
         ctx.Builder.Emit(Opcode.MatchBegin);
@@ -1026,42 +1039,80 @@ public sealed class BytecodeEmitter
         for (int i = 0; i < match.Arms.Count; i++)
         {
             var arm = match.Arms[i];
-            int skipArmPatch;
+            var skipPatches = new List<int>();
 
+            // ── Pattern dispatch ──────────────────────────────────────
             switch (arm.Pattern)
             {
                 case ValuePattern vp:
                     ctx.Builder.Emit(Opcode.MatchArmEq);
                     EmitInlineValue(ctx, vp.Value);
-                    skipArmPatch = ctx.Builder.ReserveI32();
+                    skipPatches.Add(ctx.Builder.ReserveI32());
                     break;
                 case RangePattern rp:
                     ctx.Builder.Emit(Opcode.MatchArmRange);
                     EmitInlineValue(ctx, rp.Low);
                     EmitInlineValue(ctx, rp.High);
-                    skipArmPatch = ctx.Builder.ReserveI32();
+                    skipPatches.Add(ctx.Builder.ReserveI32());
+                    break;
+                case WildcardPattern when arm.Guard is null:
+                    ctx.Builder.Emit(Opcode.MatchDefault);
+                    skipPatches.Add(ctx.Builder.ReserveI32());
                     break;
                 case WildcardPattern:
-                    ctx.Builder.Emit(Opcode.MatchDefault);
-                    skipArmPatch = ctx.Builder.ReserveI32();
+                    // Wildcard with guard: no pattern opcode needed,
+                    // the guard expression + JumpIfFalse handle the condition.
                     break;
                 case IdentifierPattern ip:
+                    // Emit MatchArmGuard which binds the discriminant to a hidden field.
+                    // Without a guard this is just a wildcard (MatchDefault).
                     if (arm.Guard is not null)
                     {
                         ctx.Builder.Emit(Opcode.MatchArmGuard);
-                        skipArmPatch = ctx.Builder.ReserveI32();
+                        ctx.Builder.EmitU16(guardBinderFields[ip.Name]);
                     }
                     else
                     {
                         ctx.Builder.Emit(Opcode.MatchDefault);
-                        skipArmPatch = ctx.Builder.ReserveI32();
+                        skipPatches.Add(ctx.Builder.ReserveI32());
                     }
                     break;
                 default:
                     continue;
             }
 
-            // Emit the type read for this arm (with optional array wrapping).
+            // ── Guard expression (if present) ─────────────────────────
+            if (arm.Guard is not null)
+            {
+                // For IdentifierPattern, temporarily bind the binder name
+                // to the hidden field so expressions like s.starts_with(...)
+                // resolve the identifier to the discriminant value.
+                string? binderName = null;
+                bool hadPrevious = false;
+                ushort previousId = 0;
+
+                if (arm.Pattern is IdentifierPattern ip2)
+                {
+                    binderName = ip2.Name;
+                    hadPrevious = ctx.FieldIndices.TryGetValue(binderName, out previousId);
+                    ctx.FieldIndices[binderName] = guardBinderFields[binderName];
+                }
+
+                EmitExpression(ctx, arm.Guard);
+                ctx.Builder.Emit(Opcode.JumpIfFalse);
+                skipPatches.Add(ctx.Builder.ReserveI32());
+
+                // Restore previous scope for the binder name.
+                if (binderName is not null)
+                {
+                    if (hadPrevious)
+                        ctx.FieldIndices[binderName] = previousId;
+                    else
+                        ctx.FieldIndices.Remove(binderName);
+                }
+            }
+
+            // ── Arm body ──────────────────────────────────────────────
             if (arm.Array is not null)
             {
                 string parentFieldName = ctx.GetFieldName(fieldId);
@@ -1078,8 +1129,9 @@ public sealed class BytecodeEmitter
             int endPatch = ctx.Builder.ReserveI32();
             armEndPatches.Add(endPatch);
 
-            // Patch the arm skip to jump here (past the arm body).
-            ctx.Builder.PatchI32(skipArmPatch, ctx.Builder.Position);
+            // Patch all skip targets for this arm to point here (past the arm body).
+            foreach (var patch in skipPatches)
+                ctx.Builder.PatchI32(patch, ctx.Builder.Position);
         }
 
         // Patch all arm-end jumps to here.

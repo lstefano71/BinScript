@@ -186,15 +186,109 @@ public class NativeExportTests
         Assert.Contains("1", json);
     }
 
-    // ── Produce stubs ────────────────────────────────────────────
+    // ── Produce: JSON → Binary ──────────────────────────────────
+
+    private static BinScriptProgram CompileProgram(string source)
+    {
+        var compiler = new BinScriptCompiler();
+        var result = compiler.Compile(source);
+        Assert.True(result.Success, string.Join("; ", result.Diagnostics.Select(d => d.Message)));
+        return new BinScriptProgram(result.Program!);
+    }
 
     [Fact]
-    public void ProduceStubs_SetNotImplementedError()
+    public void FromJsonStaticSize_FixedStruct_ReturnsSize()
     {
-        // The native exports set ErrorState — we test the pattern directly.
-        ErrorState.Set("Not yet implemented");
-        Assert.Equal("Not yet implemented", ErrorState.Get());
-        ErrorState.Clear();
+        var program = CompileProgram("@root struct T { a: u8  b: u8 }");
+        int rootIndex = program.Bytecode.RootStructIndex;
+        Assert.True(rootIndex >= 0);
+        Assert.Equal(2, program.Bytecode.Structs[rootIndex].StaticSize);
+    }
+
+    [Fact]
+    public void FromJsonStaticSize_LargerFixedStruct_ReturnsSize()
+    {
+        var program = CompileProgram("@root struct T { a: u8  b: u16  c: u32 }");
+        int rootIndex = program.Bytecode.RootStructIndex;
+        Assert.Equal(7, program.Bytecode.Structs[rootIndex].StaticSize);
+    }
+
+    [Fact]
+    public void FromJsonStaticSize_DynamicStruct_ReturnsNegative()
+    {
+        var program = CompileProgram("@root struct T { len: u8  name: string[len] }");
+        int rootIndex = program.Bytecode.RootStructIndex;
+        Assert.Equal(-1, program.Bytecode.Structs[rootIndex].StaticSize);
+    }
+
+    [Fact]
+    public void FromJsonStaticSize_NamedEntry_ReturnsSize()
+    {
+        var program = CompileProgram("@root struct Root { a: u8 } struct Other { x: u16  y: u16 }");
+        int otherIndex = program.Bytecode.FindStructIndex("Other");
+        Assert.True(otherIndex >= 0);
+        Assert.Equal(4, program.Bytecode.Structs[otherIndex].StaticSize);
+    }
+
+    [Fact]
+    public void Produce_SimpleStruct_RoundTrips()
+    {
+        var program = CompileProgram("@root struct T { a: u8  b: u8 }");
+        byte[] original = [0xAB, 0xCD];
+
+        string json = program.ToJson(original);
+        byte[] produced = program.FromJson(json);
+
+        Assert.Equal(original, produced);
+    }
+
+    [Fact]
+    public void Produce_MultiFieldStruct_RoundTrips()
+    {
+        var program = CompileProgram("@default_endian(little) @root struct T { a: u8  b: u16  c: u32 }");
+        byte[] original = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07];
+
+        string json = program.ToJson(original);
+        byte[] produced = program.FromJson(json);
+
+        Assert.Equal(original, produced);
+    }
+
+    [Fact]
+    public void Produce_NestedStruct_RoundTrips()
+    {
+        var program = CompileProgram(
+            "@root struct Outer { inner: Inner  c: u8 } struct Inner { a: u8  b: u8 }");
+        byte[] original = [0x0A, 0x0B, 0x0C];
+
+        string json = program.ToJson(original);
+        byte[] produced = program.FromJson(json);
+
+        Assert.Equal(original, produced);
+    }
+
+    [Fact]
+    public void Produce_ViaHandleTable_RoundTrips()
+    {
+        var program = CompileProgram("@root struct T { a: u8  b: u8 }");
+        var handle = HandleTable.Alloc(program);
+
+        var prog = HandleTable.Get<BinScriptProgram>(handle);
+        Assert.NotNull(prog);
+
+        byte[] original = [0x12, 0x34];
+        string json = prog!.ToJson(original);
+        byte[] produced = prog.FromJson(json);
+
+        Assert.Equal(original, produced);
+        HandleTable.Free(handle);
+    }
+
+    [Fact]
+    public void Produce_InvalidHandle_ReturnsNull()
+    {
+        var bogus = HandleTable.Get<BinScriptProgram>(IntPtr.Zero);
+        Assert.Null(bogus);
     }
 
     // ── AllocUtf8 helper ─────────────────────────────────────────

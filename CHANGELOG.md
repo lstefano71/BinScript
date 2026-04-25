@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-04-25 22:16
+
+### Added
+- **src/BinScript.Interop/binscript.h** — Canonical C header extracted from docs/C_ABI.md as single source of truth for the C-ABI surface.
+- **docs/C_ABI.md: Maintenance Checklist** — Checklist of files to update when the C-ABI surface changes.
+
+### Changed
+- **docs/C_ABI.md** — Header File section now references the canonical header file instead of inlining it.
+
 ## 2026-04-25
 
 ### Added

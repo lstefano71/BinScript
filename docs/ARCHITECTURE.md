@@ -50,6 +50,7 @@ BinScript/
 ├── docs/
 │   ├── PRD.md
 │   ├── LANGUAGE_SPEC.md
+│   ├── GRAMMAR.md                ← formal EBNF grammar
 │   ├── ARCHITECTURE.md          ← this file
 │   ├── C_ABI.md
 │   ├── BYTECODE.md
@@ -280,7 +281,7 @@ Converts source text into a stream of tokens. Handles comments, string literals 
 
 ### 4.2 Parser
 
-Recursive descent parser producing an AST. The grammar is LL(1)-friendly with minimal lookahead. Key AST nodes:
+Recursive descent parser producing an AST. The formal grammar is defined in [GRAMMAR.md](GRAMMAR.md) (EBNF notation). The grammar is LL(1)-friendly with minimal lookahead. Key AST nodes:
 
 - `ScriptFile` → list of top-level declarations
 - `StructDecl` → name, parameters, fields, directives

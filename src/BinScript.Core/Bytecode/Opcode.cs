@@ -112,6 +112,14 @@ public enum Opcode : byte
     ArrayNext = 0xD4,
     ArrayEnd = 0xD5,
 
+    // Array search (.find()/.any()/.all())
+    ArrayStoreElem = 0xD6,     // u16 arrayFieldId — snapshot child FVT for later search
+    ArraySearchBegin = 0xD7,   // u16 arrayFieldId, u8 mode — start search iteration
+    PushElemField = 0xD8,      // u16 fieldNameIdx — push field from current search element
+    ArraySearchCheck = 0xD9,   // i32 loopTarget, i32 notFoundTarget — check pred, advance/break
+    ArraySearchCopy = 0xDA,    // u16 srcFieldNameIdx, u16 dstFieldId — copy matched field to parent
+    ArraySearchEnd = 0xDB,     // (no operands) — pop search state
+
     // Match
     MatchBegin = 0xE0,
     MatchArmEq = 0xE1,

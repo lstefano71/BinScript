@@ -23,6 +23,10 @@ public sealed class BytecodeEmitter
     // Per-struct context used during emission.
     private readonly List<StructEmitContext> _structContexts = new();
 
+    // Tracks the current search lambda parameter name (e.g., "s" in s => pred).
+    // When set, s.field emits PushElemField instead of PushFieldVal.
+    private string? _currentSearchLambdaParam;
+
     public BytecodeEmitter(ScriptFile ast, TypeResolver typeEnv, Dictionary<string, object>? parameters = null)
     {
         _ast = ast;
@@ -106,6 +110,9 @@ public sealed class BytecodeEmitter
         // and pre-allocate hidden field IDs in the parent scope so that
         // EmitFieldAccess can resolve them via FieldIndices.
         PreAllocateDottedFields(ctx, decl.Members);
+
+        // Pre-scan: identify which array fields are targets of .find()/.any()/.all()
+        ctx.SearchedArrayNames = CollectSearchedArrayNames(decl.Members);
 
         EmitMembers(ctx, decl.Members);
         builder.Emit(Opcode.Return);
@@ -267,6 +274,78 @@ public sealed class BytecodeEmitter
             IndexAccessExpr ia => GetRootIdentifier(ia.Object),
             _ => "",
         };
+    }
+
+    /// <summary>
+    /// Scans all expressions in members for MethodCallExpr with .find()/.any()/.all()/.find_or()
+    /// and returns the set of array field names that are targets of these calls.
+    /// </summary>
+    private static HashSet<string> CollectSearchedArrayNames(IReadOnlyList<MemberDecl> members)
+    {
+        var names = new HashSet<string>();
+        foreach (var member in members)
+            CollectSearchedArrayNamesInMember(member, names);
+        return names;
+    }
+
+    private static void CollectSearchedArrayNamesInMember(MemberDecl member, HashSet<string> names)
+    {
+        switch (member)
+        {
+            case FieldDecl field:
+                if (field.Type is MatchTypeRef mt)
+                    CollectSearchedArrayNamesInExpr(mt.Match.Discriminant, names);
+                if (field.Array is CountArraySpec cas)
+                    CollectSearchedArrayNamesInExpr(cas.Count, names);
+                else if (field.Array is UntilArraySpec uas)
+                    CollectSearchedArrayNamesInExpr(uas.Condition, names);
+                break;
+            case LetBinding lb:
+                CollectSearchedArrayNamesInExpr(lb.Value, names);
+                break;
+            case AtBlock atBlock:
+                CollectSearchedArrayNamesInExpr(atBlock.Offset, names);
+                foreach (var m in atBlock.Members)
+                    CollectSearchedArrayNamesInMember(m, names);
+                break;
+        }
+    }
+
+    private static void CollectSearchedArrayNamesInExpr(Expression expr, HashSet<string> names)
+    {
+        switch (expr)
+        {
+            case MethodCallExpr mc when mc.MethodName is "find" or "find_or" or "any" or "all":
+                if (mc.Object is IdentifierExpr id)
+                    names.Add(id.Name);
+                foreach (var arg in mc.Args)
+                    CollectSearchedArrayNamesInExpr(arg, names);
+                break;
+            case MethodCallExpr mc2:
+                CollectSearchedArrayNamesInExpr(mc2.Object, names);
+                foreach (var arg in mc2.Args)
+                    CollectSearchedArrayNamesInExpr(arg, names);
+                break;
+            case BinaryExpr bin:
+                CollectSearchedArrayNamesInExpr(bin.Left, names);
+                CollectSearchedArrayNamesInExpr(bin.Right, names);
+                break;
+            case UnaryExpr un:
+                CollectSearchedArrayNamesInExpr(un.Operand, names);
+                break;
+            case FunctionCallExpr fn:
+                foreach (var arg in fn.Args)
+                    CollectSearchedArrayNamesInExpr(arg, names);
+                break;
+            case LambdaExpr lambda:
+                CollectSearchedArrayNamesInExpr(lambda.Body, names);
+                break;
+            case BlockExpr block:
+                foreach (var binding in block.Bindings)
+                    CollectSearchedArrayNamesInExpr(binding.Value, names);
+                CollectSearchedArrayNamesInExpr(block.Result, names);
+                break;
+        }
     }
 
     private void EmitMembers(StructEmitContext ctx, IReadOnlyList<MemberDecl> members)
@@ -894,6 +973,14 @@ public sealed class BytecodeEmitter
 
         // Emit the field body (the read for one element).
         EmitFieldRead(ctx, field.Type, fieldId, field.Modifiers);
+
+        // If this array is a target of .find()/.any()/.all(), snapshot element field tables.
+        if (ctx.SearchedArrayNames.Contains(field.Name))
+        {
+            ctx.Builder.Emit(Opcode.ArrayStoreElem);
+            ctx.Builder.EmitU16(fieldId);
+        }
+
         EmitFieldPostProcessing(ctx, field, fieldId);
 
         ctx.Builder.Emit(Opcode.ArrayNext);
@@ -914,10 +1001,78 @@ public sealed class BytecodeEmitter
     private void EmitLetBinding(StructEmitContext ctx, LetBinding let)
     {
         ushort fieldId = ctx.AllocateField(let.Name, new FieldModifiers { IsHidden = true }, _masterBuilder);
+
+        // Special handling for .find()/.find_or() — result is a struct projection, not a scalar.
+        if (let.Value is MethodCallExpr mc && mc.MethodName is "find" or "find_or")
+        {
+            EmitArraySearchLetBinding(ctx, let.Name, fieldId, mc);
+            return;
+        }
+
         EmitExpression(ctx, let.Value);
         // Store the computed value as a hidden field.
         ctx.Builder.Emit(Opcode.StoreFieldVal);
         ctx.Builder.EmitU16(fieldId);
+    }
+
+    /// <summary>
+    /// Emits a .find()/.find_or() search loop for a let-binding.
+    /// Copies matched element fields to pre-allocated hidden field IDs.
+    /// </summary>
+    private void EmitArraySearchLetBinding(StructEmitContext ctx, string letName, ushort fieldId, MethodCallExpr mc)
+    {
+        string arrayName = ((IdentifierExpr)mc.Object).Name;
+        ushort arrayFieldId = ctx.FieldIndices[arrayName];
+
+        byte mode = (byte)(mc.MethodName == "find" ? 0 : 1);
+
+        // ArraySearchBegin
+        ctx.Builder.Emit(Opcode.ArraySearchBegin);
+        ctx.Builder.EmitU16(arrayFieldId);
+        ctx.Builder.EmitU8(mode);
+
+        int loopStart = ctx.Builder.Position;
+
+        // Compile predicate lambda body
+        var lambda = (LambdaExpr)mc.Args[0];
+        var savedParam = _currentSearchLambdaParam;
+        _currentSearchLambdaParam = lambda.Parameter;
+        EmitExpression(ctx, lambda.Body);
+        _currentSearchLambdaParam = savedParam;
+
+        // ArraySearchCheck: loopTarget + notFoundTarget
+        ctx.Builder.Emit(Opcode.ArraySearchCheck);
+        ctx.Builder.EmitI32(loopStart);
+        int notFoundPatch = ctx.Builder.ReserveI32();
+
+        // ─── Found path: copy matched element fields to pre-allocated hidden fields ───
+        foreach (var kvp in ctx.FieldIndices)
+        {
+            if (kvp.Key.StartsWith(letName + "."))
+            {
+                string childFieldName = kvp.Key.Substring(letName.Length + 1);
+                ctx.Builder.Emit(Opcode.ArraySearchCopy);
+                ctx.Builder.EmitU16(_masterBuilder.InternString(childFieldName));
+                ctx.Builder.EmitU16(kvp.Value);
+            }
+        }
+
+        ctx.Builder.Emit(Opcode.Jump);
+        int endPatch = ctx.Builder.ReserveI32();
+
+        // ─── Not-found path ───
+        ctx.Builder.PatchI32(notFoundPatch, ctx.Builder.Position);
+        if (mode == 1 && mc.Args.Count > 1)
+        {
+            // find_or: compile default expression
+            EmitExpression(ctx, mc.Args[1]);
+            ctx.Builder.Emit(Opcode.StoreFieldVal);
+            ctx.Builder.EmitU16(fieldId);
+        }
+        // For find (mode 0): ArraySearchEnd will throw if no match
+
+        ctx.Builder.PatchI32(endPatch, ctx.Builder.Position);
+        ctx.Builder.Emit(Opcode.ArraySearchEnd);
     }
 
     // ─── Align ────────────────────────────────────────────────────────
@@ -1124,6 +1279,15 @@ public sealed class BytecodeEmitter
 
     private void EmitFieldAccess(StructEmitContext ctx, FieldAccessExpr fa)
     {
+        // When inside a search lambda, s.field_name → PushElemField
+        if (_currentSearchLambdaParam != null && fa.Object is IdentifierExpr root
+            && root.Name == _currentSearchLambdaParam)
+        {
+            ctx.Builder.Emit(Opcode.PushElemField);
+            ctx.Builder.EmitU16(_masterBuilder.InternString(fa.FieldName));
+            return;
+        }
+
         // Flatten to a dotted path and check if it was pre-allocated.
         string path = FlattenFieldPath(fa);
         if (ctx.FieldIndices.TryGetValue(path, out ushort fid))
@@ -1266,6 +1430,13 @@ public sealed class BytecodeEmitter
 
     private void EmitMethodCall(StructEmitContext ctx, MethodCallExpr mc)
     {
+        // Array search methods need special handling
+        if (mc.MethodName is "find" or "find_or" or "any" or "all")
+        {
+            EmitArraySearchExpression(ctx, mc);
+            return;
+        }
+
         EmitExpression(ctx, mc.Object);
         for (int i = 0; i < mc.Args.Count; i++)
             EmitExpression(ctx, mc.Args[i]);
@@ -1282,6 +1453,72 @@ public sealed class BytecodeEmitter
                 ctx.Builder.Emit(Opcode.StrContains);
                 break;
         }
+    }
+
+    /// <summary>
+    /// Emits an array search expression (.any()/.all()) that pushes a bool onto the eval stack.
+    /// Also handles .find()/.find_or() when used in expression context (not let-binding).
+    /// </summary>
+    private void EmitArraySearchExpression(StructEmitContext ctx, MethodCallExpr mc)
+    {
+        string arrayName = ((IdentifierExpr)mc.Object).Name;
+        ushort arrayFieldId = ctx.FieldIndices[arrayName];
+
+        byte mode = mc.MethodName switch
+        {
+            "find" => 0,
+            "find_or" => 1,
+            "any" => 2,
+            "all" => 3,
+            _ => 0,
+        };
+
+        ctx.Builder.Emit(Opcode.ArraySearchBegin);
+        ctx.Builder.EmitU16(arrayFieldId);
+        ctx.Builder.EmitU8(mode);
+
+        int loopStart = ctx.Builder.Position;
+
+        var lambda = (LambdaExpr)mc.Args[0];
+        var savedParam = _currentSearchLambdaParam;
+        _currentSearchLambdaParam = lambda.Parameter;
+        EmitExpression(ctx, lambda.Body);
+        _currentSearchLambdaParam = savedParam;
+
+        ctx.Builder.Emit(Opcode.ArraySearchCheck);
+        ctx.Builder.EmitI32(loopStart);
+        int notFoundPatch = ctx.Builder.ReserveI32();
+
+        // Found path: push true for any, false for all (early exit)
+        if (mode == 2) // any → found match → true
+        {
+            ctx.Builder.Emit(Opcode.PushConstI64);
+            ctx.Builder.EmitI64(1);
+        }
+        else if (mode == 3) // all → found non-match → false
+        {
+            ctx.Builder.Emit(Opcode.PushConstI64);
+            ctx.Builder.EmitI64(0);
+        }
+
+        ctx.Builder.Emit(Opcode.Jump);
+        int endPatch = ctx.Builder.ReserveI32();
+
+        // Not-found path: push false for any, true for all (exhausted)
+        ctx.Builder.PatchI32(notFoundPatch, ctx.Builder.Position);
+        if (mode == 2) // any → no match → false
+        {
+            ctx.Builder.Emit(Opcode.PushConstI64);
+            ctx.Builder.EmitI64(0);
+        }
+        else if (mode == 3) // all → all matched → true
+        {
+            ctx.Builder.Emit(Opcode.PushConstI64);
+            ctx.Builder.EmitI64(1);
+        }
+
+        ctx.Builder.PatchI32(endPatch, ctx.Builder.Position);
+        ctx.Builder.Emit(Opcode.ArraySearchEnd);
     }
 
     private ushort ResolveFieldId(StructEmitContext ctx, string name)
@@ -1486,6 +1723,7 @@ public sealed class BytecodeEmitter
         public Dictionary<string, ushort> FieldIndices { get; } = new();
         public Dictionary<string, ushort> ParamIndices { get; } = new();
         public List<FieldMeta> FieldMetas { get; } = new();
+        public HashSet<string> SearchedArrayNames { get; set; } = new();
         private ushort _nextFieldId;
 
         public ushort AllocateField(string name, FieldModifiers mods, BytecodeBuilder masterBuilder)

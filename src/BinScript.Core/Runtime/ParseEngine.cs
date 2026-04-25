@@ -917,6 +917,112 @@ public sealed class ParseEngine
                     break;
                 }
 
+                // ─── Array Search (.find/.any/.all) ────────────────
+
+                case Opcode.ArrayStoreElem:
+                {
+                    ushort arrayFieldId = ReadU16(bytecode, ref ip);
+                    ctx.StoreArrayElement(arrayFieldId);
+                    break;
+                }
+
+                case Opcode.ArraySearchBegin:
+                {
+                    ushort arrayFieldId = ReadU16(bytecode, ref ip);
+                    byte mode = bytecode[ip++];
+                    var store = ctx.GetArrayElementStore(arrayFieldId)
+                        ?? throw new ParseException($"No stored array elements for field {arrayFieldId}.");
+                    ctx.PushSearch(new ArraySearchState
+                    {
+                        Store = store,
+                        CurrentIndex = 0,
+                        MatchedElement = null,
+                        Mode = mode,
+                    });
+                    break;
+                }
+
+                case Opcode.PushElemField:
+                {
+                    ushort nameIdx = ReadU16(bytecode, ref ip);
+                    var state = ctx.PeekSearch();
+                    var elem = state.Store.Elements[state.CurrentIndex];
+                    string fieldName = program.GetString(nameIdx);
+                    var childMeta = program.Structs[state.Store.StructIndex];
+                    bool found = false;
+                    for (int fi = 0; fi < childMeta.Fields.Length; fi++)
+                    {
+                        if (program.GetString(childMeta.Fields[fi].NameIndex) == fieldName)
+                        {
+                            ctx.Push(elem.GetValue((ushort)fi));
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found)
+                        ctx.Push(StackValue.Zero);
+                    break;
+                }
+
+                case Opcode.ArraySearchCheck:
+                {
+                    int loopTarget = ReadI32(bytecode, ref ip);
+                    int notFoundTarget = ReadI32(bytecode, ref ip);
+                    bool predResult = ctx.Pop().AsBool();
+                    var state = ctx.PeekSearch();
+
+                    // For modes 0-2 (find/find_or/any): break on TRUE
+                    // For mode 3 (all): break on FALSE
+                    bool shouldBreak = state.Mode == 3 ? !predResult : predResult;
+
+                    if (shouldBreak)
+                    {
+                        state.MatchedElement = state.Store.Elements[state.CurrentIndex];
+                        // Fall through to found/break path
+                    }
+                    else
+                    {
+                        state.CurrentIndex++;
+                        if (state.CurrentIndex < state.Store.Elements.Count)
+                            ip = baseOffset + loopTarget;
+                        else
+                            ip = baseOffset + notFoundTarget;
+                    }
+                    break;
+                }
+
+                case Opcode.ArraySearchCopy:
+                {
+                    ushort srcNameIdx = ReadU16(bytecode, ref ip);
+                    ushort dstFieldId = ReadU16(bytecode, ref ip);
+                    var state = ctx.PeekSearch();
+                    if (state.MatchedElement != null)
+                    {
+                        string fieldName = program.GetString(srcNameIdx);
+                        var childMeta = program.Structs[state.Store.StructIndex];
+                        for (int fi = 0; fi < childMeta.Fields.Length; fi++)
+                        {
+                            if (program.GetString(childMeta.Fields[fi].NameIndex) == fieldName)
+                            {
+                                fieldTable.SetValue(dstFieldId, state.MatchedElement.GetValue((ushort)fi));
+                                fieldTable.SetOffset(dstFieldId, state.MatchedElement.GetOffset((ushort)fi));
+                                fieldTable.SetSize(dstFieldId, state.MatchedElement.GetSize((ushort)fi));
+                                fieldTable.SetArrayCount(dstFieldId, state.MatchedElement.GetArrayCount((ushort)fi));
+                                break;
+                            }
+                        }
+                    }
+                    break;
+                }
+
+                case Opcode.ArraySearchEnd:
+                {
+                    var state = ctx.PopSearch();
+                    if (state.Mode == 0 && state.MatchedElement == null)
+                        throw new ParseException("Array .find() found no matching element.");
+                    break;
+                }
+
                 // ─── Match ─────────────────────────────────────────
                 case Opcode.MatchBegin:
                     // Discriminant is already on the eval stack
@@ -1133,6 +1239,14 @@ public sealed class ParseEngine
             Opcode.ArrayBeginCount or Opcode.ArrayBeginUntil or
             Opcode.ArrayBeginSentinel or Opcode.ArrayBeginGreedy or
             Opcode.ArrayNext or Opcode.ArrayEnd => 0,
+
+            // Array search ops
+            Opcode.ArrayStoreElem => 2,            // arrayFieldId:u16
+            Opcode.ArraySearchBegin => 2 + 1,      // arrayFieldId:u16 + mode:u8
+            Opcode.PushElemField => 2,              // fieldNameIdx:u16
+            Opcode.ArraySearchCheck => 4 + 4,       // loopTarget:i32 + notFoundTarget:i32
+            Opcode.ArraySearchCopy => 2 + 2,        // srcFieldNameIdx:u16 + dstFieldId:u16
+            Opcode.ArraySearchEnd => 0,
 
             Opcode.MatchBegin or Opcode.MatchEnd => 0,
             Opcode.MatchArmEq => ComputeMatchArmEqSize(bytecode, ip),

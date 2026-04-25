@@ -111,3 +111,10 @@ Full .bsx syntax at docs/LANGUAGE_SPEC.md
 - **ADR-001**: `@map` is syntactic sugar for pure inlined expressions (not real functions). No recursion, no side effects.
 - **ADR-002**: Circular structures are **deferred** for v1. Depth limit (256) catches accidental cycles.
 - **ADR-003**: Pointers are first-class (`ptr<T>` / `relptr<T>`) with transparent JSON dereferencing by default.
+
+## Instructions
+- when a bug is fixed always add non regression tests
+- when a new feature is added always add tests covering it
+- when big decisions are taken write an ADR and link it in the architecture document
+- try and keep a changelog with items including a timestamp
+- in case of changes including but not limited to the addition of bytecode instructions, changes to the runtime engines, or modifications to the plugin interfaces, update the relevant documentation files in the `docs/` folder to reflect these changes.

@@ -1333,4 +1333,129 @@ struct Hdr { tag: Tag }
         using var doc = JsonDocument.Parse(json);
         Assert.Equal(unchecked((long)0xDEADBEEF), doc.RootElement.GetProperty("payload").GetInt64());
     }
+
+    // ─── Array search methods (.find/.any/.all) ───────────────────
+
+    [Fact]
+    public void ArrayFind_ReturnsFirstMatch()
+    {
+        var source = @"
+struct Item {
+    id: u8
+    value: u16
+}
+@root struct Root {
+    items: Item[3]
+    @let found = items.find(i => i.id == 2)
+    @let result = found.value
+}";
+        var program = Compile(source);
+        // Item[0]: id=1 value=0x0010, Item[1]: id=2 value=0x0020, Item[2]: id=3 value=0x0030
+        var data = new byte[] {
+            1, 0x10, 0x00,
+            2, 0x20, 0x00,
+            3, 0x30, 0x00,
+        };
+        var json = ParseToJson(program, data);
+        using var doc = JsonDocument.Parse(json);
+        // found.value should be 0x0020 = 32
+        Assert.Equal(32, doc.RootElement.GetProperty("items").EnumerateArray().ElementAt(1).GetProperty("value").GetInt32());
+    }
+
+    [Fact]
+    public void ArrayAny_ReturnsTrueWhenMatch()
+    {
+        var source = @"
+struct Item { id: u8 }
+@root struct Root {
+    items: Item[3]
+    @let has_two = items.any(i => i.id == 2)
+    marker: u8
+}";
+        var program = Compile(source);
+        var data = new byte[] { 1, 2, 3, 0xFF };
+        var json = ParseToJson(program, data);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal(0xFF, doc.RootElement.GetProperty("marker").GetInt32());
+    }
+
+    [Fact]
+    public void ArrayAny_ReturnsFalseWhenNoMatch()
+    {
+        var source = @"
+struct Item { id: u8 }
+@root struct Root {
+    items: Item[3]
+    @let has_five = items.any(i => i.id == 5)
+    marker: u8
+}";
+        var program = Compile(source);
+        var data = new byte[] { 1, 2, 3, 0xAA };
+        var json = ParseToJson(program, data);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal(0xAA, doc.RootElement.GetProperty("marker").GetInt32());
+    }
+
+    [Fact]
+    public void ArrayAll_ReturnsTrueWhenAllMatch()
+    {
+        var source = @"
+struct Item { val: u8 }
+@root struct Root {
+    items: Item[3]
+    @let all_positive = items.all(i => i.val > 0)
+    marker: u8
+}";
+        var program = Compile(source);
+        var data = new byte[] { 1, 2, 3, 0xBB };
+        var json = ParseToJson(program, data);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal(0xBB, doc.RootElement.GetProperty("marker").GetInt32());
+    }
+
+    [Fact]
+    public void ArrayAll_ReturnsFalseWhenNotAllMatch()
+    {
+        var source = @"
+struct Item { val: u8 }
+@root struct Root {
+    items: Item[3]
+    @let all_big = items.all(i => i.val > 2)
+    marker: u8
+}";
+        var program = Compile(source);
+        var data = new byte[] { 1, 5, 6, 0xCC };
+        var json = ParseToJson(program, data);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal(0xCC, doc.RootElement.GetProperty("marker").GetInt32());
+    }
+
+    [Fact]
+    public void ArrayFind_FieldProjection()
+    {
+        // Test that find result's fields are accessible via dotted access
+        var source = @"
+struct Section {
+    start: u16
+    size: u16
+}
+@root struct Root {
+    sections: Section[3]
+    @let target = sections.find(s => s.start == 100)
+    @let offset = target.start + target.size
+}";
+        var program = Compile(source);
+        // Section[0]: start=50 size=10, Section[1]: start=100 size=200, Section[2]: start=300 size=50
+        var data = new byte[] {
+            50, 0, 10, 0,
+            100, 0, 200, 0,
+            44, 1, 50, 0,  // 300=0x012C
+        };
+        var json = ParseToJson(program, data);
+        using var doc = JsonDocument.Parse(json);
+        // target.start=100, target.size=200 → offset=300
+        var sections = doc.RootElement.GetProperty("sections");
+        Assert.Equal(3, sections.GetArrayLength());
+        Assert.Equal(100, sections[1].GetProperty("start").GetInt32());
+    }
 }

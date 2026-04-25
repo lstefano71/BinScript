@@ -674,6 +674,12 @@ public sealed class ProduceEngine
             Opcode.StrStartsWith or Opcode.StrEndsWith or Opcode.StrContains => 0,
             Opcode.ArrayBeginCount or Opcode.ArrayBeginUntil or Opcode.ArrayBeginSentinel or
             Opcode.ArrayBeginGreedy or Opcode.ArrayNext or Opcode.ArrayEnd => 0,
+            Opcode.ArrayStoreElem => 2,
+            Opcode.ArraySearchBegin => 2 + 1,
+            Opcode.PushElemField => 2,
+            Opcode.ArraySearchCheck => 4 + 4,
+            Opcode.ArraySearchCopy => 2 + 2,
+            Opcode.ArraySearchEnd => 0,
             Opcode.MatchBegin or Opcode.MatchEnd => 0,
             Opcode.MatchArmEq => ComputeMatchArmEqSize(bytecode, ip),
             Opcode.MatchArmRange => ComputeMatchArmRangeSize(bytecode, ip),

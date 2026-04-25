@@ -2,6 +2,22 @@ namespace BinScript.Core.Runtime;
 
 using BinScript.Core.Bytecode;
 
+/// <summary>Stores snapshotted array elements for later .find()/.any()/.all() search.</summary>
+public sealed class ArrayElementStore
+{
+    public List<FieldValueTable> Elements { get; } = new();
+    public int StructIndex { get; set; } = -1;
+}
+
+/// <summary>Runtime state for an active array search iteration.</summary>
+public sealed class ArraySearchState
+{
+    public ArrayElementStore Store { get; set; } = null!;
+    public int CurrentIndex { get; set; }
+    public FieldValueTable? MatchedElement { get; set; }
+    public byte Mode { get; set; } // 0=find, 1=find_or, 2=any, 3=all
+}
+
 /// <summary>
 /// Runtime state/context for the parse VM.
 /// Holds the cursor, stacks, and per-struct field tables.
@@ -39,9 +55,11 @@ public sealed class ParseContext
     // Current struct index being executed
     public int CurrentStructIndex { get; set; } = -1;
 
-    // Array element storage for .find()/.any()/.all() methods
-    // Maps field_id → list of per-element field tables (cloned after each struct array element)
-    private readonly Dictionary<ushort, List<FieldValueTable>> _arrayElements = new();
+    // Array element storage for .find()/.any()/.all() — keyed by array's field ID
+    private readonly Dictionary<ushort, ArrayElementStore> _arrayElements = new();
+
+    // Search state stack for nested .find()/.any()/.all() calls
+    private readonly Stack<ArraySearchState> _searchStack = new();
 
     public ParseContext(ReadOnlyMemory<byte> input)
     {
@@ -111,19 +129,25 @@ public sealed class ParseContext
     }
 
     // Array element storage
-    public void InitArrayStore(ushort fieldId)
+    public void StoreArrayElement(ushort fieldId)
     {
-        _arrayElements[fieldId] = new List<FieldValueTable>();
+        if (LastChildFieldTable == null) return;
+        if (!_arrayElements.TryGetValue(fieldId, out var store))
+        {
+            store = new ArrayElementStore { StructIndex = LastChildStructIndex };
+            _arrayElements[fieldId] = store;
+        }
+        store.Elements.Add(LastChildFieldTable.Clone());
     }
 
-    public void StoreArrayElement(ushort fieldId, FieldValueTable table)
+    public ArrayElementStore? GetArrayElementStore(ushort fieldId)
     {
-        if (_arrayElements.TryGetValue(fieldId, out var list))
-            list.Add(table.Clone());
+        return _arrayElements.TryGetValue(fieldId, out var store) ? store : null;
     }
 
-    public List<FieldValueTable>? GetArrayElements(ushort fieldId)
-    {
-        return _arrayElements.TryGetValue(fieldId, out var list) ? list : null;
-    }
+    // Search state operations
+    public void PushSearch(ArraySearchState state) => _searchStack.Push(state);
+    public ArraySearchState PopSearch() => _searchStack.Pop();
+    public ArraySearchState PeekSearch() => _searchStack.Peek();
+    public bool HasActiveSearch => _searchStack.Count > 0;
 }

@@ -167,10 +167,28 @@ public sealed class SemanticAnalyzer
                     ValidateExpressionReferences(arg, knownFields, contextSpan, diagnostics);
                 break;
 
+            case BlockExpr block:
+                // Let bindings introduce new names visible within the block
+                var blockScope = new HashSet<string>(knownFields);
+                foreach (var binding in block.Bindings)
+                {
+                    ValidateExpressionReferences(binding.Value, blockScope, contextSpan, diagnostics);
+                    blockScope.Add(binding.Name);
+                }
+                ValidateExpressionReferences(block.Result, blockScope, contextSpan, diagnostics);
+                break;
+
+            case LambdaExpr lambda:
+                // Lambda parameter is in scope for the body
+                var lambdaScope = new HashSet<string>(knownFields) { lambda.Parameter };
+                ValidateExpressionReferences(lambda.Body, lambdaScope, contextSpan, diagnostics);
+                break;
+
             // Literals — nothing to validate.
             case IntLiteralExpr:
             case StringLiteralExpr:
             case BoolLiteralExpr:
+            case NullLiteralExpr:
                 break;
         }
     }

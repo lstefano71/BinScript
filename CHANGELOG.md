@@ -13,6 +13,13 @@
 - Updated BYTECODE.md with `MATCH_ARM_GUARD` new operand format and `MATCH_BEGIN` design rationale.
 - Updated `disasm.py` opcode decoder for new operand format.
 
+### Grammar remediation
+- **`@derived` fields now accept `@hidden`** — `@derived area: u8 = w * h @hidden` is now valid, allowing computed fields to be excluded from output.
+- **SemanticAnalyzer validates `BlockExpr`/`LambdaExpr`** — Forward reference detection now recurses into block expressions and lambda bodies. Previously, forward references inside `{ @let x = future_field, ... }` silently passed validation.
+- Fixed pointer default width in GRAMMAR.md (`u32` → `u64`).
+- Fixed `@offset_of` → `@offsetof` typo in LANGUAGE_SPEC.md.
+- Documented `@skip` literal-only rationale, `if`/`else` reserved keyword note, `PtrModifier` accuracy, `@derived` array restriction in GRAMMAR.md.
+
 ## 2025-04-25
 
 ### Added

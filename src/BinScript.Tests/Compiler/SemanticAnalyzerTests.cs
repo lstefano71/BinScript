@@ -590,4 +590,56 @@ public class SemanticAnalyzerTests
         Assert.False(result.Success);
         Assert.Contains(Errors(result), d => d.Message.Contains("Duplicate"));
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    //  BlockExpr / LambdaExpr forward reference detection
+    // ═══════════════════════════════════════════════════════════════
+
+    [Fact]
+    public void DerivedField_BlockExpr_ForwardRef_ProducesDiagnostic()
+    {
+        var result = Compile("""
+            @root struct File {
+                @derived computed: u32 = {
+                    @let tmp = future_field * 2,
+                    tmp + 1
+                }
+                future_field: u32,
+            }
+            """);
+        Assert.False(result.Success);
+        Assert.Contains(Errors(result), d =>
+            d.Code == "BSC302" && d.Message.Contains("future_field"));
+    }
+
+    [Fact]
+    public void DerivedField_BlockExpr_ValidBackRef_Succeeds()
+    {
+        var result = Compile("""
+            @root struct File {
+                base_val: u32,
+                @derived computed: u32 = {
+                    @let tmp = base_val * 2,
+                    tmp + 1
+                }
+            }
+            """);
+        Assert.True(result.Success);
+    }
+
+    [Fact]
+    public void DerivedField_BlockExpr_LetBindingsScope_Succeeds()
+    {
+        var result = Compile("""
+            @root struct File {
+                x: u32,
+                @derived result: u32 = {
+                    @let a = x + 1,
+                    @let b = a * 2,
+                    b + a
+                }
+            }
+            """);
+        Assert.True(result.Success);
+    }
 }

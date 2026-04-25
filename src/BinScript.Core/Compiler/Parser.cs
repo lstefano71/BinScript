@@ -432,14 +432,16 @@ public sealed class Parser
         Expect(TokenType.Equal);
         var derivedExpr = ParseExpression();
 
-        var modifiers = new FieldModifiers
+        var preModPos = _pos;
+        var modifiers = ParseFieldModifiers(new FieldModifiers
         {
             IsDerived = true,
             DerivedExpression = derivedExpr,
-        };
+        });
+        var endSpan = _pos > preModPos ? _tokens[_pos - 1].Span : derivedExpr.Span;
         return new FieldDecl(
             name.Text, type, null, null, modifiers,
-            SourceSpan.Merge(start.Span, derivedExpr.Span));
+            SourceSpan.Merge(start.Span, endSpan));
     }
 
     private FieldDecl ParseHiddenField()

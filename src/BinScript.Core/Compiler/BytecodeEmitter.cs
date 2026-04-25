@@ -1585,6 +1585,8 @@ public sealed class BytecodeEmitter
         {
             FieldAccessExpr fa => FlattenFieldPath(fa.Object) + "." + fa.FieldName,
             IdentifierExpr id => id.Name,
+            IndexAccessExpr { Index: IntLiteralExpr { Value: var n } } ia
+                => FlattenFieldPath(ia.Object) + $"[{n}]",
             _ => "?",
         };
     }

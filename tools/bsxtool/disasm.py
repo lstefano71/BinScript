@@ -79,6 +79,7 @@ class Opcode(IntEnum):
     FORWARD_ARRAY_STORE = 0x78
     FORWARD_PARAM_ARRAY_STORE = 0x79
     ARRAY_SEARCH_BEGIN_PARAM = 0x7A
+    EXTRACT_ARRAY_ELEM_FIELD = 0x7B
 
     # Expression VM
     PUSH_CONST_I64  = 0x80
@@ -527,6 +528,16 @@ def _dec_copy_child(bc: bytes, ip: int, prog: BscProgram) -> tuple[str, int]:
     dst_name = _resolve_field(dst_fid, prog)
     return f"child={child_name!r} (sid={child_name_idx}) → {dst_name} (fid={dst_fid})", 4
 
+def _dec_extract_array_elem_field(bc: bytes, ip: int, prog: BscProgram) -> tuple[str, int]:
+    arr_fid = struct.unpack_from("<H", bc, ip)[0]
+    elem_idx = struct.unpack_from("<H", bc, ip + 2)[0]
+    elem_fname_idx = struct.unpack_from("<H", bc, ip + 4)[0]
+    dst_fid = struct.unpack_from("<H", bc, ip + 6)[0]
+    arr_name = _resolve_field(arr_fid, prog)
+    elem_fname = _resolve_string(elem_fname_idx, prog)
+    dst_name = _resolve_field(dst_fid, prog)
+    return f"{arr_name}[{elem_idx}].{elem_fname} → {dst_name} (fid={dst_fid})", 8
+
 def _dec_forward_array_store(bc: bytes, ip: int, prog: BscProgram) -> tuple[str, int]:
     fid = struct.unpack_from("<H", bc, ip)[0]
     dst_param = struct.unpack_from("<H", bc, ip + 2)[0]
@@ -655,6 +666,7 @@ _OPCODE_DECODERS: dict[int, tuple[str, callable]] = {
     Opcode.READ_PTR_U64:    ("READ_PTR_U64",     _dec_read_ptr_u64),
     Opcode.EMIT_NULL:       ("EMIT_NULL",        _dec_emit_null),
     Opcode.COPY_CHILD_FIELD:("COPY_CHILD_FIELD", _dec_copy_child),
+    Opcode.EXTRACT_ARRAY_ELEM_FIELD:("EXTRACT_ARRAY_ELEM_FIELD", _dec_extract_array_elem_field),
     Opcode.FORWARD_ARRAY_STORE:("FORWARD_ARRAY_STORE", _dec_forward_array_store),
     Opcode.FORWARD_PARAM_ARRAY_STORE:("FORWARD_PARAM_ARRAY_STORE", _dec_forward_param_array_store),
     Opcode.ARRAY_SEARCH_BEGIN_PARAM:("ARRAY_SEARCH_BEGIN_PARAM", _dec_array_search_begin_param),

@@ -671,6 +671,7 @@ public sealed class ProduceEngine
             Opcode.PushConstI64 or Opcode.PushConstF64 => 8,
             Opcode.PushConstStr or Opcode.PushFieldVal or Opcode.PushParam or Opcode.StoreFieldVal or Opcode.PushFileParam => 2,
             Opcode.CopyChildField => 4,  // childFieldNameIdx(2) + dstFieldId(2)
+            Opcode.ExtractArrayElemField => 8, // arrayFieldId(2) + elemIndex(2) + elemFieldNameIdx(2) + dstFieldId(2)
             Opcode.PushRuntimeVar => 1, Opcode.PushIndex => 0,
             >= Opcode.OpAdd and <= Opcode.OpNeg => 0,
             Opcode.FnSizeOf or Opcode.FnOffsetOf or Opcode.FnCount or Opcode.FnStrLen => 2,

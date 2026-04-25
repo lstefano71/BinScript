@@ -71,7 +71,7 @@ All directives start with `@`:
 @derived        @assert             @encoding
 @until          @until_sentinel     @greedy
 @input_size     @offset             @remaining
-@sizeof         @offset_of          @count
+@sizeof         @offsetof           @count
 @strlen         @crc32              @adler32
 @map            @max_depth          @inline
 @show_ptr
@@ -720,7 +720,7 @@ In produce mode, the `_variant` field is required to determine which arm to prod
 | Function | Description |
 |----------|-------------|
 | `@sizeof(field)` | Byte size of a field's data as parsed/produced |
-| `@offset_of(field)` | Byte offset of a field from its containing struct's start |
+| `@offsetof(field)` | Byte offset of a field from its containing struct's start |
 | `@count(array_field)` | Number of elements in an array field |
 | `@strlen(string_field)` | Byte length of a string field's content (excluding terminator) |
 | `@crc32(fields...)` | CRC-32 over the raw bytes of the specified fields |

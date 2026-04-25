@@ -146,4 +146,7 @@ public enum Opcode : byte
     ForwardArrayStore = 0x78,       // u16 fieldId, u16 dstParamIdx — forward field's array store as pending param
     ForwardParamArrayStore = 0x79,  // u16 srcParamIdx, u16 dstParamIdx — forward received param's store as pending param
     ArraySearchBeginParam = 0x7A,   // u16 paramIdx, u8 mode — begin search on param-provided array store
+
+    // Array element indexing (constant index access)
+    ExtractArrayElemField = 0x7B,   // u16 arrayFieldId, u16 elemIndex, u16 elemFieldNameIdx, u16 dstFieldId — copy field from stored array element to hidden field
 }

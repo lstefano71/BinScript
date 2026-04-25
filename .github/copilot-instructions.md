@@ -79,6 +79,7 @@ The `stdlib/` folder contains real-world `.bsx` scripts for formats like PNG, EL
 ### .bsx Script Language Patterns
 
 Full .bsx syntax at docs/LANGUAGE_SPEC.md
+There's a formal grammar at docs/GRAMMAR.md
 
 - `@root struct` marks the parse/produce entry point — exactly one per script
 - `@default_endian(little|big)` at file top sets the default byte order

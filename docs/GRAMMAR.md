@@ -74,14 +74,16 @@ HexEscape      = 'x' HexDigit HexDigit ;
 |---------|-------|---------|-------|
 | `struct` | Struct | `match` | Match |
 | `bits` | Bits | `when` | When |
-| `enum` | Enum | `if` | If |
-| `const` | Const | `else` | Else |
+| `enum` | Enum | `if`† | If |
+| `const` | Const | `else`† | Else |
 | `bit` | Bit | `bool` | Bool |
 | `bytes` | Bytes | `ptr` | Ptr |
 | `cstring` | CString | `relptr` | RelPtr |
 | `string` | String | `null` | NullLiteral |
 | `fixed_string` | FixedString | `true` | TrueLiteral |
 | | | `false` | FalseLiteral |
+
+†`if` and `else` are reserved keywords with no current syntactic production. They are reserved for potential future use (e.g., conditional compilation).
 
 ### 1.6 Primitive Type Keywords
 
@@ -234,7 +236,9 @@ AssertDirective
                = '@assert' '(' Expression ',' STRING_LITERAL ')' ;
 ```
 
-Note: `@skip` takes only a literal integer, not a general expression.
+Note: `@skip` takes only a literal integer, not a general expression. This is intentional — `@skip`
+compiles to the `SkipFixed` opcode with a compact `u16` operand, avoiding expression evaluation on the
+fast path. For dynamic skip amounts, use `@seek(@offset + expr)` instead.
 
 ### 2.6 Field Declarations
 
@@ -242,12 +246,17 @@ Note: `@skip` takes only a literal integer, not a general expression.
 FieldDecl      = FieldName ':' TypeReference [ '=' Expression ] [ ArraySpec ]
                  { FieldModifier } ;
 
-DerivedField   = '@derived' FieldName ':' TypeReference '=' Expression ;
+DerivedField   = '@derived' FieldName ':' TypeReference '=' Expression
+                 { FieldModifier } ;
 
 HiddenField    = '@hidden' FieldDecl ;
 
 FieldName      = IDENTIFIER | '_' ;
 ```
+
+`@derived` fields compute a value from an expression rather than reading from the binary stream.
+They support trailing `FieldModifier`s (e.g., `@hidden`) but do not support `ArraySpec` — an array
+requires reading multiple values from the stream, which contradicts `@derived` semantics.
 
 ### 2.7 Field Modifiers
 
@@ -305,16 +314,16 @@ PrimitiveType  = 'u8' | 'u16' | 'u32' | 'u64'
 PtrType        = ( 'ptr' | 'relptr' ) '<' BaseTypeRef { PtrModifier }
                  [ ',' PrimitiveType ] '>' ;
 
-PtrModifier    = '@encoding' '(' IDENTIFIER ')'
-               | '@hidden'
-               ;
+PtrModifier    = FieldModifier ;
 
 NamedType      = IDENTIFIER [ '(' ArgList ')' ] ;
 
 ArgList        = Expression { ',' Expression } ;
 ```
 
-The `?` suffix makes any type nullable. Pointer types may specify inner modifiers and an optional width type (defaults to `u32`).
+Inside pointer types, the parser accepts any `FieldModifier` (§2.7). In practice, only `@encoding` and `@hidden` are semantically meaningful on inner pointed-to types; other modifiers are parsed but have no effect.
+
+The `?` suffix makes any type nullable. Pointer types may specify inner modifiers and an optional width type (defaults to `u64`).
 
 ### 2.10 Match Expression
 

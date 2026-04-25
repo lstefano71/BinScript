@@ -781,6 +781,33 @@ public sealed class ParseEngine
                     break;
                 }
 
+                case Opcode.ExtractArrayElemField:
+                {
+                    ushort arrayFieldId = ReadU16(bytecode, ref ip);
+                    ushort elemIndex = ReadU16(bytecode, ref ip);
+                    ushort elemFieldNameIdx = ReadU16(bytecode, ref ip);
+                    ushort dstFieldId = ReadU16(bytecode, ref ip);
+                    var store = ctx.GetArrayElementStore(arrayFieldId);
+                    if (store != null && elemIndex < store.Elements.Count && store.StructIndex >= 0)
+                    {
+                        var elemFvt = store.Elements[elemIndex];
+                        string elemFieldName = program.GetString(elemFieldNameIdx);
+                        var elemMeta = program.Structs[store.StructIndex];
+                        for (int fi = 0; fi < elemMeta.Fields.Length; fi++)
+                        {
+                            if (program.GetString(elemMeta.Fields[fi].NameIndex) == elemFieldName)
+                            {
+                                fieldTable.SetValue(dstFieldId, elemFvt.GetValue((ushort)fi));
+                                fieldTable.SetOffset(dstFieldId, elemFvt.GetOffset((ushort)fi));
+                                fieldTable.SetSize(dstFieldId, elemFvt.GetSize((ushort)fi));
+                                fieldTable.SetArrayCount(dstFieldId, elemFvt.GetArrayCount((ushort)fi));
+                                break;
+                            }
+                        }
+                    }
+                    break;
+                }
+
                 // ─── Arithmetic/Logic ──────────────────────────────
                 case Opcode.OpAdd: ExpressionEvaluator.Add(ctx); break;
                 case Opcode.OpSub: ExpressionEvaluator.Sub(ctx); break;
@@ -1312,6 +1339,7 @@ public sealed class ParseEngine
             Opcode.PushConstStr or Opcode.PushFieldVal or Opcode.PushParam or
             Opcode.StoreFieldVal or Opcode.PushFileParam => 2,
             Opcode.CopyChildField => 2 + 2,    // childFieldNameIdx + dstFieldId
+            Opcode.ExtractArrayElemField => 2 + 2 + 2 + 2, // arrayFieldId + elemIndex + elemFieldNameIdx + dstFieldId
             Opcode.PushRuntimeVar => 1,
             Opcode.PushIndex => 0,
 

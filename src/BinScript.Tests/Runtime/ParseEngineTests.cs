@@ -1874,4 +1874,27 @@ struct Section {
         using var doc = JsonDocument.Parse(json);
         Assert.Equal(0x1234, doc.RootElement.GetProperty("body").GetInt64());
     }
+
+    // ─── @derived @hidden ────────────────────────────────────────────
+
+    [Fact]
+    public void DerivedField_Hidden_ExcludedFromOutput()
+    {
+        var program = Compile("""
+            @default_endian(little)
+            @root struct Test {
+                width: u8,
+                height: u8,
+                @derived area: u8 = width * height @hidden,
+            }
+            """);
+
+        byte[] data = [5, 7]; // width=5, height=7
+        var json = ParseToJson(program, data);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal(5, doc.RootElement.GetProperty("width").GetInt64());
+        Assert.Equal(7, doc.RootElement.GetProperty("height").GetInt64());
+        Assert.False(doc.RootElement.TryGetProperty("area", out _),
+            "@derived @hidden field should not appear in output");
+    }
 }

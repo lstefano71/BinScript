@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-04-25 22:36
+
+### Added
+- **tools/examples/go/produce_wav.go** — Standalone Go example demonstrating WAV file production via the BinScript C-ABI DLL. Uses `syscall.LoadDLL` for dynamic loading (Windows-only, no cgo needed). Generates a "Twinkle Twinkle Little Star" melody as 8-bit unsigned PCM audio, builds the WAV JSON structure with base64-encoded sample data, and produces a valid WAV binary file using `binscript_from_json_calc_size` + `binscript_from_json_into`. Auto-discovers the NativeAOT DLL by walking up from CWD or via `BINSCRIPT_DLL` env var.
+- **tools/examples/go/go.mod** — Go module file for the WAV produce example (no external dependencies).
+
 ## 2026-04-25 22:33
 
 ### Added

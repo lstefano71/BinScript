@@ -137,6 +137,10 @@ $RECYCLE.BIN/
 .AppleDouble
 .LSOverride
 
+# Python
+__pycache__/
+*.pyc
+
 # Misc
 *.swp
 *~

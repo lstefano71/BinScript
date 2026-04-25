@@ -82,6 +82,10 @@ bits struct Characteristics : u16 {
 }
 ```
 
+## Tools
+
+- **[bsxtool](tools/bsxtool/README.md)** — Python CLI exercising the C-ABI DLL: compile, parse, produce, disassemble bytecode, hex dump `.bsc` files. Great for exploring the bytecode emitted for stdlib scripts.
+
 ## Documentation
 
 - [Product Requirements Document](docs/PRD.md)

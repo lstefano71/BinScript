@@ -16,6 +16,18 @@
   - Pure Python 3.10+ stdlib (no pip dependencies)
   - Full documentation in `tools/bsxtool/README.md` with maintenance checklist
 
+### Documentation
+- **BYTECODE.md** — Comprehensive update to match actual implementation:
+  - Added §3.0 Tagged Inline Literals section documenting the type_tag encoding used by `ASSERT_VALUE`, `MATCH_ARM_EQ`, `MATCH_ARM_RANGE`
+  - Fixed operand formats: `SKIP_FIXED` (u16 not u32), `ASSERT_VALUE` (tagged literal not fixed u64), `EMIT_*_BEGIN` (name_id, field_id order), `PUSH_PARAM` (u16 not u8), `MATCH_BEGIN` (no operands), `MATCH_ARM_*` (tagged literals), `ARRAY_BEGIN_UNTIL`/`SENTINEL` (no operands)
+  - Replaced obsolete opcodes: `READ_PTR`/`DEREF_BEGIN`/`DEREF_END`/`WRITE_PTR`/`NULL_CHECK`/`DEPTH_CHECK`/`DEPTH_POP` → `READ_PTR_U32`/`READ_PTR_U64`/`EMIT_NULL`/`COPY_CHILD_FIELD`/`FORWARD_ARRAY_STORE`/`FORWARD_PARAM_ARRAY_STORE`/`ARRAY_SEARCH_BEGIN_PARAM`
+  - Replaced obsolete `ARRAY_FIND`/`ARRAY_FIND_OR`/`ARRAY_ANY`/`ARRAY_ALL` → new search system: `ARRAY_STORE_ELEM`/`ARRAY_SEARCH_BEGIN`/`PUSH_ELEM_FIELD`/`ARRAY_SEARCH_CHECK`/`ARRAY_SEARCH_COPY`/`ARRAY_SEARCH_END`
+  - Added sentinel opcodes: `SENTINEL_SAVE`/`SENTINEL_CHECK`
+  - Added new expression VM opcodes: `STORE_FIELD_VAL`/`PUSH_FILE_PARAM`
+  - Added §3.3 Parse-Only vs Full-VM Support noting which opcodes lack produce engine support
+  - Updated §4.1 Execution Model state to include child field tables, array element stores, search state, param forwarding, and file-level params
+  - Added versioning note about opcode reassignment during pre-1.0 development
+
 ### Implemented
 - **C-ABI produce functions** — Implemented the 4 produce native exports that were stubs returning "Not yet implemented":
   - `binscript_from_json_static_size` — Returns compile-time-known output size for a struct

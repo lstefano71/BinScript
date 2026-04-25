@@ -63,6 +63,18 @@ BinScript compiles `.bsx` scripts into a flat bytecode format optimized for:
 
 Each instruction is encoded as a 1-byte opcode followed by operands. Operands are packed in little-endian format.
 
+### 3.0 Tagged Inline Literals
+
+Several instructions (`ASSERT_VALUE`, `MATCH_ARM_EQ`, `MATCH_ARM_RANGE`) use a **tagged inline literal** encoding for values that can be different types. The encoding is:
+
+| Tag | Type | Size | Description |
+|-----|------|------|-------------|
+| 0 | i64 | 8 bytes | Signed 64-bit integer (little-endian) |
+| 2 | string_id | 2 bytes | Index into the string table (u16le) |
+| 3 | bool | 1 byte | Boolean (0 or 1) |
+
+A tagged inline literal is encoded as `type_tag:u8` followed by the value bytes. The total size varies by type tag.
+
 ### 3.1 Tier 1 — Fast-Path Instructions
 
 These instructions handle flat, sequential struct reads with no control flow. A struct composed entirely of Tier 1 instructions can be executed as a tight loop.
@@ -88,11 +100,11 @@ These instructions handle flat, sequential struct reads with no control flow. A 
 | `READ_F64_LE` | 0x11 | field_id:u16 | |
 | `READ_F64_BE` | 0x12 | field_id:u16 | |
 | `READ_BOOL` | 0x13 | field_id:u16 | Read 1 byte as boolean |
-| `READ_FIXED_STR` | 0x14 | field_id:u16, len:u16, encoding:u8 | |
-| `READ_CSTRING` | 0x15 | field_id:u16, encoding:u8 | Read until 0x00 |
+| `READ_FIXED_STR` | 0x14 | field_id:u16, len:u16, encoding:u8 | Read fixed-length string |
+| `READ_CSTRING` | 0x15 | field_id:u16, encoding:u8 | Read null-terminated string |
 | `READ_BYTES_FIXED` | 0x16 | field_id:u16, len:u32 | Read fixed byte count |
-| `SKIP_FIXED` | 0x17 | len:u32 | Advance cursor, no emit |
-| `ASSERT_VALUE` | 0x18 | field_id:u16, expected:u64, msg_id:u16 | Assert field equals value |
+| `SKIP_FIXED` | 0x17 | len:u16 | Advance cursor, no emit |
+| `ASSERT_VALUE` | 0x18 | field_id:u16, tagged_literal | Assert last-read field equals value. Uses tagged inline literal encoding (see §3.0) |
 
 ### 3.2 Tier 2 — Complex-Path Instructions
 
@@ -109,27 +121,39 @@ These instructions handle flat, sequential struct reads with no control flow. A 
 | `SEEK_PUSH` | 0x51 | — | Push current cursor to position stack |
 | `SEEK_POP` | 0x52 | — | Pop position stack, restore cursor |
 | **Emitter events** | | | |
-| `EMIT_STRUCT_BEGIN` | 0x60 | field_id:u16, struct_name_id:u16 | |
+| `EMIT_STRUCT_BEGIN` | 0x60 | name_id:u16, field_id:u16 | Begin struct: name_id is type name, field_id is the containing field |
 | `EMIT_STRUCT_END` | 0x61 | — | |
-| `EMIT_ARRAY_BEGIN` | 0x62 | field_id:u16 | |
+| `EMIT_ARRAY_BEGIN` | 0x62 | name_id:u16, field_id:u16 | Begin array |
 | `EMIT_ARRAY_END` | 0x63 | — | |
-| `EMIT_VARIANT_BEGIN` | 0x64 | field_id:u16, variant_name_id:u16 | |
+| `EMIT_VARIANT_BEGIN` | 0x64 | name_id:u16, field_id:u16 | Begin variant (match arm body) |
 | `EMIT_VARIANT_END` | 0x65 | — | |
-| `EMIT_BITS_BEGIN` | 0x66 | field_id:u16, struct_name_id:u16 | |
+| `EMIT_BITS_BEGIN` | 0x66 | name_id:u16, field_id:u16 | Begin bits struct |
 | `EMIT_BITS_END` | 0x67 | — | |
 | **Dynamic reads** | | | |
 | `READ_BYTES_DYN` | 0x70 | field_id:u16 | Pop u64 length, read bytes |
 | `READ_STRING_DYN` | 0x71 | field_id:u16, encoding:u8 | Pop u64 length, read string |
-| `READ_BITS` | 0x72 | field_id:u16, bit_count:u8 | Read N bits |
-| `READ_BIT` | 0x73 | field_id:u16 | Read 1 bit |
+| `READ_BITS` | 0x72 | field_id:u16, bit_count:u8 | Read N bits from bit accumulator |
+| `READ_BIT` | 0x73 | field_id:u16 | Read 1 bit from bit accumulator |
+| **Pointer operations** | | | |
+| `READ_PTR_U32` | 0x74 | field_id:u16 | Read 4-byte pointer, seek to target. For `ptr<T, u32>` and `relptr<T, u32>`. Compiler emits surrounding `SEEK_PUSH`/`SEEK_POP` and `CALL_STRUCT` to dereference |
+| `READ_PTR_U64` | 0x75 | field_id:u16 | Read 8-byte pointer, seek to target. Same pattern as `READ_PTR_U32` but for u64 width |
+| `EMIT_NULL` | 0x76 | field_id:u16 | Emit null value for a nullable pointer field (`ptr<T>?` where value is 0) |
+| **Cross-struct field access** | | | |
+| `COPY_CHILD_FIELD` | 0x77 | child_field_name_idx:u16, dst_field_id:u16 | Copy a field from the last child struct's field table to the parent. Uses **name-based** lookup (string table index), not field ID, because field IDs are per-struct |
+| **Array store forwarding** | | | |
+| `FORWARD_ARRAY_STORE` | 0x78 | field_id:u16, dst_param_idx:u16 | Forward a field's stored array elements as a struct call parameter |
+| `FORWARD_PARAM_ARRAY_STORE` | 0x79 | src_param_idx:u16, dst_param_idx:u16 | Forward a received param's array store to another struct call parameter |
+| `ARRAY_SEARCH_BEGIN_PARAM` | 0x7A | param_idx:u16, mode:u8 | Begin search over array received via parameter. Same modes as `ARRAY_SEARCH_BEGIN` |
 | **Expression VM** | | | |
 | `PUSH_CONST_I64` | 0x80 | value:i64 | Push integer constant |
 | `PUSH_CONST_F64` | 0x81 | value:f64 | Push float constant |
 | `PUSH_CONST_STR` | 0x82 | string_id:u16 | Push string constant |
 | `PUSH_FIELD_VAL` | 0x83 | field_id:u16 | Push a previously parsed field's value |
-| `PUSH_PARAM` | 0x84 | param_idx:u8 | Push struct parameter |
-| `PUSH_RUNTIME_VAR` | 0x85 | var_id:u8 | Push runtime var (0=input_size, 1=offset, 2=remaining) |
-| `PUSH_INDEX` | 0x86 | — | Push current array _index |
+| `PUSH_PARAM` | 0x84 | param_idx:u16 | Push struct parameter by index |
+| `PUSH_RUNTIME_VAR` | 0x85 | var_id:u8 | Push runtime var (0=@input_size, 1=@offset, 2=@remaining) |
+| `PUSH_INDEX` | 0x86 | — | Push current array `_index` |
+| `STORE_FIELD_VAL` | 0x87 | field_id:u16 | Pop stack, store into field value table. Used for `@map` derived fields and array search results |
+| `PUSH_FILE_PARAM` | 0x88 | name_idx:u16 | Push a file-level runtime parameter by name (string table index). Used for `base_ptr` in pointer computations |
 | **Arithmetic/logic** | | | |
 | `OP_ADD` | 0x90 | — | Pop 2, push sum |
 | `OP_SUB` | 0x91 | — | |
@@ -165,34 +189,39 @@ These instructions handle flat, sequential struct reads with no control flow. A 
 | `STR_CONTAINS` | 0xC2 | — | |
 | **Array control** | | | |
 | `ARRAY_BEGIN_COUNT` | 0xD0 | — | Pop count, begin counted array loop |
-| `ARRAY_BEGIN_UNTIL` | 0xD1 | cond_offset:i32 | Begin condition-terminated array |
-| `ARRAY_BEGIN_SENTINEL` | 0xD2 | pred_offset:i32 | Begin sentinel-terminated array |
-| `ARRAY_BEGIN_GREEDY` | 0xD3 | — | Begin greedy array |
+| `ARRAY_BEGIN_UNTIL` | 0xD1 | — | Begin condition-terminated array. The termination condition is evaluated inline before `ARRAY_END` (not embedded in this opcode) |
+| `ARRAY_BEGIN_SENTINEL` | 0xD2 | — | Begin sentinel-terminated array. Uses `SENTINEL_SAVE`/`SENTINEL_CHECK` for element rollback on match |
+| `ARRAY_BEGIN_GREEDY` | 0xD3 | — | Begin greedy array (read until error) |
 | `ARRAY_NEXT` | 0xD4 | — | Advance to next element |
-| `ARRAY_END` | 0xD5 | — | End array loop |
-| `ARRAY_FIND` | 0xD6 | pred_offset:i32 | Iterate array, eval predicate, push first match |
-| `ARRAY_FIND_OR` | 0xD7 | pred_offset:i32 | Same, with default value on stack |
-| `ARRAY_ANY` | 0xD8 | pred_offset:i32 | Iterate array, push bool (any match) |
-| `ARRAY_ALL` | 0xD9 | pred_offset:i32 | Iterate array, push bool (all match) |
-| **Pointer operations** | | | |
-| `READ_PTR` | 0x74 | field_id:u16, width:u8, mode:u8 | Read pointer value, compute buffer offset. width: 4=u32, 8=u64. mode: 0=absolute, 1=relative |
-| `DEREF_BEGIN` | 0x75 | — | Push current position, seek to dereferenced offset (top of stack) |
-| `DEREF_END` | 0x76 | — | Pop position stack, restore cursor |
-| `WRITE_PTR` | 0x77 | field_id:u16, width:u8, mode:u8 | Produce: write computed pointer value (base + data offset) |
-| `NULL_CHECK` | 0x7A | — | Pop value, push bool (true if zero/null) |
-| **Recursion control** | | | |
-| `DEPTH_CHECK` | 0x78 | struct_id:u16, max_depth:u16 | Increment depth counter for struct, error if > max_depth |
-| `DEPTH_POP` | 0x79 | struct_id:u16 | Decrement depth counter for struct |
+| `ARRAY_END` | 0xD5 | — | End array loop. For `@until` arrays, pops the condition bool from stack |
+| **Array search** *(parse-only; see §3.3)* | | | |
+| `ARRAY_STORE_ELEM` | 0xD6 | array_field_id:u16 | Snapshot current element's field table into the array element store for later search |
+| `ARRAY_SEARCH_BEGIN` | 0xD7 | array_field_id:u16, mode:u8 | Begin iteration over stored elements. mode: 0=find, 1=find_or_default, 2=any, 3=all |
+| `PUSH_ELEM_FIELD` | 0xD8 | field_name_idx:u16 | Push a field value from the current search element. Uses **name-based** lookup (string table index) |
+| `ARRAY_SEARCH_CHECK` | 0xD9 | loop_target:i32, not_found_target:i32 | Pop predicate bool. If match found (per mode), jump to not_found_target to exit. Otherwise advance and jump to loop_target |
+| `ARRAY_SEARCH_COPY` | 0xDA | src_field_name_idx:u16, dst_field_id:u16 | Copy a field from the matched element to the parent's field table. src uses name-based lookup |
+| `ARRAY_SEARCH_END` | 0xDB | — | End search, pop search state. For find (mode 0), throws if no match found |
+| **Sentinel control** *(parse-only)* | | | |
+| `SENTINEL_SAVE` | 0xDC | — | Save emitter checkpoint before reading a sentinel-guarded element |
+| `SENTINEL_CHECK` | 0xDD | — | Pop bool; if true, rollback emitter to checkpoint and break the enclosing array loop |
 | **Match** | | | |
-| `MATCH_BEGIN` | 0xE0 | arm_count:u16 | Begin match, discriminant on stack |
-| `MATCH_ARM_EQ` | 0xE1 | value:i64, jump:i32 | If discriminant == value, jump |
-| `MATCH_ARM_RANGE` | 0xE2 | lo:i64, hi:i64, jump:i32 | If lo <= disc <= hi, jump |
-| `MATCH_ARM_GUARD` | 0xE3 | guard_offset:i32, jump:i32 | Evaluate guard expr, jump if true |
+| `MATCH_BEGIN` | 0xE0 | — | Begin match block. Discriminant must already be on the stack |
+| `MATCH_ARM_EQ` | 0xE1 | tagged_literal, jump:i32 | If discriminant equals the tagged literal value, jump to the arm body. Uses tagged inline literal encoding (see §3.0) |
+| `MATCH_ARM_RANGE` | 0xE2 | lo:tagged_literal, hi:tagged_literal, jump:i32 | If lo ≤ discriminant ≤ hi, jump. Both bounds use tagged inline literals |
+| `MATCH_ARM_GUARD` | 0xE3 | jump:i32 | Guard arm — currently acts as unconditional jump (guard expression evaluation is not yet implemented) |
 | `MATCH_DEFAULT` | 0xE4 | jump:i32 | Default arm |
-| `MATCH_END` | 0xE5 | — | End match |
+| `MATCH_END` | 0xE5 | — | End match block |
 | **Alignment** | | | |
 | `ALIGN` | 0xF0 | — | Pop alignment value, skip to boundary |
 | `ALIGN_FIXED` | 0xF1 | alignment:u16 | Skip to next multiple of alignment |
+
+### 3.3 Parse-Only vs Full-VM Support
+
+Most opcodes are supported by both `ParseEngine` and `ProduceEngine`. The following opcodes are currently **parse-only** — the produce engine knows their operand sizes (for bytecode traversal) but does not execute them:
+
+- Array search opcodes (0xD6–0xDB): `ARRAY_STORE_ELEM`, `ARRAY_SEARCH_BEGIN`, `PUSH_ELEM_FIELD`, `ARRAY_SEARCH_CHECK`, `ARRAY_SEARCH_COPY`, `ARRAY_SEARCH_END`
+- Sentinel opcodes (0xDC–0xDD): `SENTINEL_SAVE`, `SENTINEL_CHECK`
+- Array store forwarding (0x78–0x7A): `FORWARD_ARRAY_STORE`, `FORWARD_PARAM_ARRAY_STORE`, `ARRAY_SEARCH_BEGIN_PARAM`
 
 ## 4. Execution Model
 
@@ -202,13 +231,16 @@ The VM has no general-purpose registers. Instead it maintains:
 
 - **Evaluation stack**: arbitrary depth, holds `i64`, `u64`, `f64`, `string`, `bool` values
 - **Position cursor**: current byte offset in the input buffer (`u64`)
-- **Position stack**: for `SEEK_PUSH` / `SEEK_POP` / `DEREF_BEGIN` / `DEREF_END` (implements `@at` and pointer dereferencing)
-- **Field value table**: indexed by `field_id`, stores parsed values for back-references
+- **Position stack**: for `SEEK_PUSH` / `SEEK_POP` (implements `@at` blocks, pointer dereferencing)
+- **Field value table**: per-struct, indexed by `field_id`, stores parsed values for back-references
+- **Last child field table**: the field value table from the most recently called child struct, used by `COPY_CHILD_FIELD` for dotted field access (`a.b`)
 - **Parameter stack**: for nested struct calls with parameters
 - **Array index**: current `_index` value (stack of indices for nested arrays)
 - **Bit accumulator**: for bit-level reads within `bits struct` (byte value + bit position)
-- **Depth counters**: per-struct recursion depth tracking, indexed by `struct_id` (for `DEPTH_CHECK` / `DEPTH_POP`)
-- **Base pointer**: the `base_ptr` parameter value, used by `READ_PTR` / `WRITE_PTR` for absolute pointer address computation
+- **Array element stores**: per-field snapshots of child struct field tables, built by `ARRAY_STORE_ELEM` during array iteration for later use by `.find()` / `.any()` / `.all()`
+- **Search state stack**: for `ARRAY_SEARCH_BEGIN` / `ARRAY_SEARCH_CHECK` / `ARRAY_SEARCH_END` — tracks iteration position and matched element during array searches
+- **Pending param array stores**: for `FORWARD_ARRAY_STORE` / `FORWARD_PARAM_ARRAY_STORE` — array element stores being forwarded through struct call parameters
+- **File-level runtime parameters**: key-value pairs (e.g., `base_ptr`) passed at parse time, accessed by `PUSH_FILE_PARAM`
 - **Data region cursor** (produce only): tracks the next available offset in the trailing data region for pointer target placement
 
 ### 4.2 Tier 1 Execution
@@ -240,10 +272,12 @@ For complex structs, the full VM runs with stack operations, control flow, and n
 ## 5. Versioning
 
 The file format version (in the header) allows forward compatibility:
-- **Version 1**: Initial format as specified in this document.
+- **Version 1**: Current format as specified in this document.
 - Loaders MUST reject files with unknown versions.
 - New opcodes can be added in minor version bumps (loaders skip unknown opcodes with known sizes).
 - Structural changes to the file format require a major version bump.
+
+> **Note:** During early development (pre-1.0), opcode assignments at 0x74–0x7A and 0xD6–0xDD were reassigned without a version bump. Bytecode files persisted before this change are incompatible with the current runtime. Since there are no external users yet, this is acceptable — see project instructions on backward compatibility.
 
 ## 6. Design Notes
 

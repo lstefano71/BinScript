@@ -1,20 +1,147 @@
 @default_endian(big)
 
 @coverage(partial)
+
+// --- Enums ---
+
+enum ColorType : u8 {
+    Grayscale      = 0,
+    RGB            = 2,
+    Indexed        = 3,
+    GrayscaleAlpha = 4,
+    RGBA           = 6,
+}
+
+enum InterlaceMethod : u8 {
+    None = 0,
+    Adam7 = 1,
+}
+
+enum SrgbRenderingIntent : u8 {
+    Perceptual            = 0,
+    RelativeColorimetric  = 1,
+    Saturation            = 2,
+    AbsoluteColorimetric  = 3,
+}
+
+// --- Root ---
+
 @root struct PngFile {
     signature: bytes[8],
-    ihdr_length: u32,
-    ihdr_type: fixed_string[4],
-    ihdr: IhdrBody,
-    ihdr_crc: u32,
+    chunks: PngChunk[] @until(@remaining == 0),
 }
+
+// --- Chunk wrapper ---
+
+struct PngChunk {
+    length: u32,
+    chunk_type: fixed_string[4],
+    body: match(chunk_type) {
+        "IHDR" => IhdrBody,
+        "PLTE" => PlteBody(length),
+        "IDAT" => bytes[length],
+        "tEXt" => TextBody(length),
+        "zTXt" => ZtxtBody(length),
+        "iTXt" => ItxtBody(length),
+        "eXIf" => bytes[length],
+        "pHYs" => PhysBody,
+        "tIME" => TimeBody,
+        "gAMA" => GamaBody,
+        "cHRM" => ChrmBody,
+        "sRGB" => SrgbBody,
+        "iCCP" => IccpBody(length),
+        "bKGD" => bytes[length],
+        "tRNS" => bytes[length],
+        "IEND" => bytes[0],
+        _ => bytes[length],
+    },
+    crc: u32,
+}
+
+// --- Critical chunks ---
 
 struct IhdrBody {
     width: u32,
     height: u32,
     bit_depth: u8,
-    color_type: u8,
+    color_type: ColorType,
     compression: u8,
     filter: u8,
-    interlace: u8,
+    interlace: InterlaceMethod,
+}
+
+struct PaletteEntry {
+    red: u8,
+    green: u8,
+    blue: u8,
+}
+
+struct PlteBody(data_length) {
+    entries: PaletteEntry[data_length / 3],
+}
+
+// --- Text chunks ---
+
+struct TextBody(data_length) {
+    keyword: cstring,
+    text: string[data_length - @strlen(keyword) - 1],
+}
+
+struct ZtxtBody(data_length) {
+    keyword: cstring,
+    compression_method: u8,
+    compressed_text: bytes[data_length - @strlen(keyword) - 2],
+}
+
+struct ItxtBody(data_length) {
+    keyword: cstring,
+    compression_flag: u8,
+    compression_method: u8,
+    language_tag: cstring,
+    translated_keyword: cstring,
+    text: bytes[data_length - @strlen(keyword) - @strlen(language_tag) - @strlen(translated_keyword) - 5],
+}
+
+// --- Metadata chunks ---
+
+struct PhysBody {
+    pixels_per_unit_x: u32,
+    pixels_per_unit_y: u32,
+    unit: u8,
+}
+
+struct TimeBody {
+    year: u16,
+    month: u8,
+    day: u8,
+    hour: u8,
+    minute: u8,
+    second: u8,
+}
+
+struct GamaBody {
+    gamma: u32,
+}
+
+struct ChrmBody {
+    white_point_x: u32,
+    white_point_y: u32,
+    red_x: u32,
+    red_y: u32,
+    green_x: u32,
+    green_y: u32,
+    blue_x: u32,
+    blue_y: u32,
+}
+
+// --- Color space chunks ---
+
+struct SrgbBody {
+    rendering_intent: SrgbRenderingIntent,
+}
+
+struct IccpBody(data_length) {
+    profile_name: cstring,
+    compression_method: u8,
+    compressed_profile: bytes[data_length - @strlen(profile_name) - 2],
 }

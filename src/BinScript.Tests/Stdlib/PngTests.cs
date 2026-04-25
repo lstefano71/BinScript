@@ -30,15 +30,24 @@ public class PngTests
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
 
-        Assert.Equal(13, root.GetProperty("ihdr_length").GetInt64());
-        Assert.Equal("IHDR", root.GetProperty("ihdr_type").GetString());
+        var chunks = root.GetProperty("chunks");
+        Assert.Equal(3, chunks.GetArrayLength()); // IHDR, IDAT, IEND
 
-        var ihdr = root.GetProperty("ihdr");
+        var firstChunk = chunks[0];
+        Assert.Equal(13, firstChunk.GetProperty("length").GetInt64());
+        Assert.Equal("IHDR", firstChunk.GetProperty("chunk_type").GetString());
+
+        var ihdr = firstChunk.GetProperty("body");
         Assert.Equal(8, ihdr.GetProperty("width").GetInt64());
         Assert.Equal(8, ihdr.GetProperty("height").GetInt64());
         Assert.Equal(8, ihdr.GetProperty("bit_depth").GetInt64());
         Assert.Equal(2, ihdr.GetProperty("color_type").GetInt64());
         Assert.Equal(0, ihdr.GetProperty("interlace").GetInt64());
+
+        // Last chunk should be IEND
+        var lastChunk = chunks[chunks.GetArrayLength() - 1];
+        Assert.Equal("IEND", lastChunk.GetProperty("chunk_type").GetString());
+        Assert.Equal(0, lastChunk.GetProperty("length").GetInt64());
     }
 
     [Fact]
@@ -51,13 +60,30 @@ public class PngTests
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
 
-        Assert.Equal(13, root.GetProperty("ihdr_length").GetInt64());
-        Assert.Equal("IHDR", root.GetProperty("ihdr_type").GetString());
+        var chunks = root.GetProperty("chunks");
+        Assert.Equal(4, chunks.GetArrayLength()); // IHDR, PLTE, IDAT, IEND
 
-        var ihdr = root.GetProperty("ihdr");
+        // IHDR
+        var ihdrChunk = chunks[0];
+        Assert.Equal("IHDR", ihdrChunk.GetProperty("chunk_type").GetString());
+        var ihdr = ihdrChunk.GetProperty("body");
         Assert.Equal(4, ihdr.GetProperty("width").GetInt64());
         Assert.Equal(4, ihdr.GetProperty("height").GetInt64());
         Assert.Equal(8, ihdr.GetProperty("bit_depth").GetInt64());
         Assert.Equal(3, ihdr.GetProperty("color_type").GetInt64());
+
+        // PLTE — verify first palette entry is red
+        var plteChunk = chunks[1];
+        Assert.Equal("PLTE", plteChunk.GetProperty("chunk_type").GetString());
+        var entries = plteChunk.GetProperty("body").GetProperty("entries");
+        Assert.True(entries.GetArrayLength() > 0);
+        var firstEntry = entries[0];
+        Assert.Equal(255, firstEntry.GetProperty("red").GetInt64());
+        Assert.Equal(0, firstEntry.GetProperty("green").GetInt64());
+        Assert.Equal(0, firstEntry.GetProperty("blue").GetInt64());
+
+        // Last chunk should be IEND
+        var lastChunk = chunks[chunks.GetArrayLength() - 1];
+        Assert.Equal("IEND", lastChunk.GetProperty("chunk_type").GetString());
     }
 }

@@ -740,4 +740,65 @@ public class SemanticAnalyzerTests
         // "value" exists in both ItemA and ItemB — no warning
         Assert.DoesNotContain(Warnings(result), d => d.Code == "BSC303");
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    //  @derived modifier warnings (BSC304)
+    // ═══════════════════════════════════════════════════════════════
+
+    [Fact]
+    public void DerivedField_WithHidden_NoWarning()
+    {
+        var result = Compile("""
+            @root struct File {
+                w: u8,
+                h: u8,
+                @derived area: u8 = w * h @hidden,
+            }
+            """);
+        Assert.True(result.Success);
+        Assert.DoesNotContain(Warnings(result), d => d.Code == "BSC304");
+    }
+
+    [Fact]
+    public void DerivedField_WithEncoding_ProducesWarning()
+    {
+        var result = Compile("""
+            @root struct File {
+                w: u8,
+                @derived label: u8 = w + 1 @encoding(utf8),
+            }
+            """);
+        Assert.True(result.Success);
+        var warn = Assert.Single(Warnings(result), d => d.Code == "BSC304");
+        Assert.Contains("@encoding", warn.Message);
+        Assert.Contains("label", warn.Message);
+    }
+
+    [Fact]
+    public void DerivedField_WithInline_ProducesWarning()
+    {
+        var result = Compile("""
+            @root struct File {
+                w: u8,
+                @derived val: u8 = w + 1 @inline,
+            }
+            """);
+        Assert.True(result.Success);
+        Assert.Contains(Warnings(result), d =>
+            d.Code == "BSC304" && d.Message.Contains("@inline"));
+    }
+
+    [Fact]
+    public void DerivedField_MultipleNonsensicalModifiers_AllWarned()
+    {
+        var result = Compile("""
+            @root struct File {
+                w: u8,
+                @derived val: u8 = w + 1 @encoding(utf8) @inline,
+            }
+            """);
+        Assert.True(result.Success);
+        var warns = Warnings(result).Where(d => d.Code == "BSC304").ToList();
+        Assert.Equal(2, warns.Count);
+    }
 }

@@ -55,6 +55,8 @@ BinScript/
 │   ├── C_ABI.md
 │   ├── BYTECODE.md
 │   ├── STDLIB.md
+│   ├── FUTURE_EXTENSIONS.md       ← planned language extensions
+│   ├── tutorial/                  ← progressive tutorial (14 chapters)
 │   └── IMPLEMENTATION_PLAN.md
 ├── stdlib/
 │   ├── pe.bsx
@@ -459,5 +461,6 @@ See [C-ABI Reference](C_ABI.md) for the complete function list.
 | Trailing data region for produce | Natural C-like layout; `@inline` opt-in for cache-friendly alternatives. See [ADR-003](adr/ADR-003-pointer-extension.md) |
 | Guarded recursion, not unlimited | Compiler verifies termination guards; runtime depth limit as safety net |
 | Circular structures deferred | JSON can't represent cycles; real binary formats are acyclic. See [ADR-002](adr/ADR-002-circular-structures-deferred.md) |
+| Reserved keyword escaping deferred | Keyword collisions are rare; backtick escaping planned for future. See [ADR-004](adr/ADR-004-keyword-escaping.md) |
 | Enums in JSON as names | Readable output; both name and numeric accepted on input |
 | `_variant` tag for match | Explicit discrimination avoids fragile inference in produce mode |

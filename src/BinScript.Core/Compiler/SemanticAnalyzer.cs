@@ -90,6 +90,9 @@ public sealed class SemanticAnalyzer
         {
             ValidateExpressionReferences(
                 field.Modifiers.DerivedExpression, knownFields, field.Span, diagnostics);
+
+            // Warn on modifiers that have no effect on derived fields
+            WarnNonsensicalDerivedModifiers(field, diagnostics);
         }
 
         // Check match exhaustiveness (type-level match).
@@ -97,6 +100,23 @@ public sealed class SemanticAnalyzer
         {
             ValidateMatchExhaustiveness(matchRef.Match, diagnostics);
         }
+    }
+
+    private static void WarnNonsensicalDerivedModifiers(FieldDecl field, List<Diagnostic> diagnostics)
+    {
+        var mods = field.Modifiers;
+        if (mods.Encoding is not null)
+            diagnostics.Add(new Diagnostic(DiagnosticSeverity.Warning, "BSC304",
+                $"@encoding has no effect on @derived field \"{field.Name}\"", field.Span));
+        if (mods.AssertExpression is not null)
+            diagnostics.Add(new Diagnostic(DiagnosticSeverity.Warning, "BSC304",
+                $"@assert has no effect on @derived field \"{field.Name}\"", field.Span));
+        if (mods.IsInline)
+            diagnostics.Add(new Diagnostic(DiagnosticSeverity.Warning, "BSC304",
+                $"@inline has no effect on @derived field \"{field.Name}\"", field.Span));
+        if (mods.ShowPtr)
+            diagnostics.Add(new Diagnostic(DiagnosticSeverity.Warning, "BSC304",
+                $"@show_ptr has no effect on @derived field \"{field.Name}\"", field.Span));
     }
 
     // ─── Match exhaustiveness ───────────────────────────────────────

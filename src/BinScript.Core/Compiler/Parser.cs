@@ -465,6 +465,7 @@ public sealed class Parser
         var arraySpec = ParseArraySpec();
         modifiers = ParseFieldModifiers(modifiers);
 
+        // TODO: endSpan should include trailing modifiers for accurate error reporting
         var endSpan = arraySpec?.Span ?? magicValue?.Span ?? type.Span;
         return new FieldDecl(
             name.Text, type, magicValue, arraySpec, modifiers,
@@ -512,6 +513,36 @@ public sealed class Parser
                 case TokenType.ShowPtr:
                     Advance();
                     current = current with { ShowPtr = true };
+                    break;
+
+                default:
+                    return current;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Parses inner modifiers for pointer types. Only <c>@encoding</c> and <c>@hidden</c>
+    /// are valid inside <c>ptr&lt;...&gt;</c> / <c>relptr&lt;...&gt;</c>.
+    /// </summary>
+    private FieldModifiers ParsePtrInnerModifiers()
+    {
+        var current = new FieldModifiers();
+        while (true)
+        {
+            switch (Current().Type)
+            {
+                case TokenType.Hidden:
+                    Advance();
+                    current = current with { IsHidden = true };
+                    break;
+
+                case TokenType.Encoding:
+                    Advance();
+                    Expect(TokenType.LeftParen);
+                    var enc = Advance();
+                    Expect(TokenType.RightParen);
+                    current = current with { Encoding = enc.Text };
                     break;
 
                 default:
@@ -703,10 +734,10 @@ public sealed class Parser
 
         var innerType = ParseBaseTypeReference();
 
-        // Optional inner field modifiers (e.g., @encoding(utf16le))
+        // Optional inner field modifiers — only @encoding and @hidden are valid inside pointers
         FieldModifiers? innerMods = null;
         if (Current().Type is TokenType.Encoding or TokenType.Hidden)
-            innerMods = ParseFieldModifiers(new FieldModifiers());
+            innerMods = ParsePtrInnerModifiers();
 
         // Optional width type after comma; defaults to u64 if omitted
         PrimitiveTypeRef? width = null;

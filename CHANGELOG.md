@@ -3,6 +3,15 @@
 ## 2026-04-25
 
 ### Added
+- **docs/tutorial/** — 14-chapter progressive tutorial covering all language features with practical examples (TCP/IP packets, WAV audio, PNG images, USB descriptors, DNS headers, and more).
+- **docs/FUTURE_EXTENSIONS.md** — Tracks planned extensions: const-folding, string interpolation, keyword escaping, conditional fields.
+- **docs/adr/ADR-004-keyword-escaping.md** — Documents reserved keyword limitation and proposes backtick escaping syntax for future implementation.
+- **BSC304 warning** — SemanticAnalyzer now warns when nonsensical modifiers (`@encoding`, `@assert`, `@inline`, `@show_ptr`) are applied to `@derived` fields. Only `@hidden` is meaningful on derived fields.
+
+### Changed
+- **PtrModifier parser tightened** — Pointer inner modifiers now accept only `@encoding` and `@hidden`. Previously the parser would accept any field modifier if `@encoding` or `@hidden` appeared first.
+- Updated LANGUAGE_SPEC.md with `@skip` literal-only rationale and keyword collision documentation.
+- Updated GRAMMAR.md to reflect PtrModifier restriction and `@derived` field modifier support.
 - **Constant-index array element access** (`array[i].field`) — Expressions like `data_directories[6].virtual_address` now work correctly in `@let` bindings, `@at` offsets, `when` guards, and array count expressions. Previously, `FlattenFieldPath` returned `"?"` for `IndexAccessExpr` nodes, causing all hidden-field pre-allocation and resolution to fail silently (values evaluated to 0).
 - **New opcode `EXTRACT_ARRAY_ELEM_FIELD` (0x7B)** — After an array loop completes, extracts a named field from a specific element's `ArrayElementStore` into a hidden field. Operands: `array_field_id:u16, elem_index:u16, elem_field_name_idx:u16, dst_field_id:u16`.
 - **Cross-struct suffix propagation pre-pass** (`PropagateIndexedPaths`) — Global pre-pass before struct emission that decomposes cross-struct dotted paths (including indexed paths) into per-struct suffixes and injects them into child structs. Handles multi-level nesting via fixpoint iteration, and resolves `match` type arms to propagate to all possible target structs.
@@ -12,7 +21,7 @@
 ### Fixed
 - **PE parsing now extracts all `@at` blocks** — `debug_directory` (with PDB path), `export_directory`, `import_directory`, and `resource_directory` are now correctly parsed from PE executables. The root cause was that `optional_header.data_directories[6].virtual_address` (and similar indexed paths) silently evaluated to 0, making all `when` guards false.
 
-## 2025-07-23
+## 2026-04-25
 
 ### Added
 - **Match guard arms** — Full implementation of `IdentifierPattern` with guard expressions in match blocks (`s when s.starts_with("AB") => Type`). Guard expressions are emitted as inline bytecode followed by `JUMP_IF_FALSE`, enabling conditional type dispatch based on string methods (`.starts_with()`, `.ends_with()`, `.contains()`), comparisons, and arbitrary expressions. Previously, guard arms compiled but were silently treated as unconditional defaults at runtime.

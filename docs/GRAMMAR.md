@@ -314,14 +314,16 @@ PrimitiveType  = 'u8' | 'u16' | 'u32' | 'u64'
 PtrType        = ( 'ptr' | 'relptr' ) '<' BaseTypeRef { PtrModifier }
                  [ ',' PrimitiveType ] '>' ;
 
-PtrModifier    = FieldModifier ;
+PtrModifier    = '@encoding' '(' IDENTIFIER ')'
+               | '@hidden'
+               ;
 
 NamedType      = IDENTIFIER [ '(' ArgList ')' ] ;
 
 ArgList        = Expression { ',' Expression } ;
 ```
 
-Inside pointer types, the parser accepts any `FieldModifier` (§2.7). In practice, only `@encoding` and `@hidden` are semantically meaningful on inner pointed-to types; other modifiers are parsed but have no effect.
+Only `@encoding` and `@hidden` are valid inside pointer types. Other field modifiers are rejected by the parser.
 
 The `?` suffix makes any type nullable. Pointer types may specify inner modifiers and an optional width type (defaults to `u64`).
 

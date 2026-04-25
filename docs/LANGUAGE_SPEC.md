@@ -59,6 +59,11 @@ cstring   string    fixed_string        ptr       relptr
 null
 ```
 
+Keywords and directives cannot be used as field or parameter names. There is currently no
+escaping mechanism (see [ADR-004](adr/ADR-004-keyword-escaping.md) for a proposed backtick
+syntax). If a binary format uses a name that collides with a keyword, choose an alternative
+(e.g., `str_val` instead of `string`).
+
 ### 2.6 Directives (Annotations)
 
 All directives start with `@`:
@@ -552,6 +557,9 @@ Reads fields at the specified offset, then restores the cursor to its previous p
 @skip(4)                // skip exactly 4 bytes
 reserved: bytes[8] @hidden,  // read 8 bytes but don't include in output
 ```
+
+`@skip(N)` accepts only a literal integer — it compiles to the `SkipFixed` opcode with a compact
+`u16` operand for zero-overhead seeking. For dynamic skip amounts, use `@seek(@offset + expr)`.
 
 ### 5.9 Coverage Annotation
 

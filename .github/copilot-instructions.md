@@ -117,7 +117,7 @@ There's a formal grammar at docs/GRAMMAR.md
 - when a bug is fixed always add non regression tests
 - when a new feature is added always add tests covering it
 - when big decisions are taken write an ADR and link it in the architecture document
-- try and keep a changelog with items including a timestamp
+- try and keep a changelog with items including a timestamp (yyyy-mm-dd HH:MM). Don't invent or guess the timestamp. get it from a programmatic source if possible (e.g. git commit time). CHANGELOG.MD
 - in case of changes including but not limited to the addition of bytecode instructions, changes to the runtime engines, or modifications to the plugin interfaces, update the relevant documentation files in the `docs/` folder to reflect these changes.
 - we don't need to be backward compatible at this stage: there are no existing users to the library, so feel free to make breaking changes without worrying about versioning or deprecation. However, make sure to update the documentation and tests accordingly to reflect any breaking changes.
 - make sure the C ABI layer, which is the final output the project is meant to provide, is kept up-to-date, well-documented and tested, as this is the primary interface that users will interact with.

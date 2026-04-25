@@ -102,8 +102,171 @@ public sealed class BytecodeEmitter
             ctx.ParamIndices[decl.Parameters[i]] = (ushort)i;
         }
 
+        // Pre-scan: collect all dotted field access paths (a.b) used in expressions
+        // and pre-allocate hidden field IDs in the parent scope so that
+        // EmitFieldAccess can resolve them via FieldIndices.
+        PreAllocateDottedFields(ctx, decl.Members);
+
         EmitMembers(ctx, decl.Members);
         builder.Emit(Opcode.Return);
+    }
+
+    /// <summary>
+    /// Scans all expressions in the struct's members for FieldAccessExpr patterns
+    /// like <c>child.field</c> and pre-allocates hidden field IDs in the parent scope.
+    /// Only pre-allocates paths whose root identifier is a declared field or let binding
+    /// in this struct (not lambda parameters or other scopes).
+    /// </summary>
+    private void PreAllocateDottedFields(StructEmitContext ctx, IReadOnlyList<MemberDecl> members)
+    {
+        // Collect names declared in this struct scope.
+        var declaredNames = new HashSet<string>();
+        foreach (var member in members)
+        {
+            if (member is FieldDecl fd) declaredNames.Add(fd.Name);
+            else if (member is LetBinding lb) declaredNames.Add(lb.Name);
+            else if (member is AtBlock atBlock) CollectDeclaredNames(atBlock.Members, declaredNames);
+        }
+
+        var dottedPaths = new HashSet<string>();
+        CollectDottedPaths(members, dottedPaths, new HashSet<string>());
+
+        foreach (var path in dottedPaths)
+        {
+            // Only pre-allocate if the root identifier is a declared field.
+            int dotIdx = path.IndexOf('.');
+            if (dotIdx > 0)
+            {
+                string root = path.Substring(0, dotIdx);
+                if (!declaredNames.Contains(root)) continue;
+            }
+
+            if (!ctx.FieldIndices.ContainsKey(path))
+            {
+                ctx.AllocateField(path, new FieldModifiers { IsHidden = true }, _masterBuilder);
+            }
+        }
+    }
+
+    private static void CollectDeclaredNames(IReadOnlyList<MemberDecl> members, HashSet<string> names)
+    {
+        foreach (var member in members)
+        {
+            if (member is FieldDecl fd) names.Add(fd.Name);
+            else if (member is LetBinding lb) names.Add(lb.Name);
+            else if (member is AtBlock atBlock) CollectDeclaredNames(atBlock.Members, names);
+        }
+    }
+
+    /// <summary>
+    /// Recursively walks all expressions in members to find FieldAccessExpr nodes
+    /// and collects their flattened dotted path strings.
+    /// Tracks lambda parameters to exclude paths rooted in them.
+    /// </summary>
+    private static void CollectDottedPaths(IReadOnlyList<MemberDecl> members, HashSet<string> paths, HashSet<string> lambdaParams)
+    {
+        foreach (var member in members)
+        {
+            switch (member)
+            {
+                case FieldDecl field:
+                    CollectDottedPathsInField(field, paths, lambdaParams);
+                    break;
+                case LetBinding let:
+                    CollectDottedPathsInExpr(let.Value, paths, lambdaParams);
+                    break;
+                case SeekDirective seek:
+                    CollectDottedPathsInExpr(seek.Offset, paths, lambdaParams);
+                    break;
+                case AtBlock atBlock:
+                    if (atBlock.Guard is not null) CollectDottedPathsInExpr(atBlock.Guard, paths, lambdaParams);
+                    CollectDottedPathsInExpr(atBlock.Offset, paths, lambdaParams);
+                    CollectDottedPaths(atBlock.Members, paths, lambdaParams);
+                    break;
+                case AssertDirective assert:
+                    CollectDottedPathsInExpr(assert.Condition, paths, lambdaParams);
+                    break;
+            }
+        }
+    }
+
+    private static void CollectDottedPathsInField(FieldDecl field, HashSet<string> paths, HashSet<string> lambdaParams)
+    {
+        if (field.Modifiers.DerivedExpression is not null)
+            CollectDottedPathsInExpr(field.Modifiers.DerivedExpression, paths, lambdaParams);
+        if (field.Array is CountArraySpec count)
+            CollectDottedPathsInExpr(count.Count, paths, lambdaParams);
+        else if (field.Array is UntilArraySpec until)
+            CollectDottedPathsInExpr(until.Condition, paths, lambdaParams);
+        else if (field.Array is SentinelArraySpec sentinel)
+            CollectDottedPathsInExpr(sentinel.Predicate, paths, lambdaParams);
+        // Also scan struct call arguments
+        if (field.Type is NamedTypeRef named)
+            foreach (var arg in named.Arguments) CollectDottedPathsInExpr(arg, paths, lambdaParams);
+        if (field.Type is MatchTypeRef match)
+        {
+            CollectDottedPathsInExpr(match.Match.Discriminant, paths, lambdaParams);
+            foreach (var arm in match.Match.Arms)
+            {
+                if (arm.Guard is not null) CollectDottedPathsInExpr(arm.Guard, paths, lambdaParams);
+                if (arm.Type is NamedTypeRef namedArm)
+                    foreach (var arg in namedArm.Arguments) CollectDottedPathsInExpr(arg, paths, lambdaParams);
+            }
+        }
+    }
+
+    private static void CollectDottedPathsInExpr(Expression expr, HashSet<string> paths, HashSet<string> lambdaParams)
+    {
+        switch (expr)
+        {
+            case FieldAccessExpr fa:
+            {
+                string path = FlattenFieldPath(fa);
+                // Only collect if root is NOT a lambda parameter.
+                string root = GetRootIdentifier(fa);
+                if (!lambdaParams.Contains(root))
+                    paths.Add(path);
+                // Also recurse into sub-expressions
+                CollectDottedPathsInExpr(fa.Object, paths, lambdaParams);
+                break;
+            }
+            case BinaryExpr bin:
+                CollectDottedPathsInExpr(bin.Left, paths, lambdaParams);
+                CollectDottedPathsInExpr(bin.Right, paths, lambdaParams);
+                break;
+            case UnaryExpr un:
+                CollectDottedPathsInExpr(un.Operand, paths, lambdaParams);
+                break;
+            case IndexAccessExpr ia:
+                CollectDottedPathsInExpr(ia.Object, paths, lambdaParams);
+                CollectDottedPathsInExpr(ia.Index, paths, lambdaParams);
+                break;
+            case FunctionCallExpr fn:
+                foreach (var arg in fn.Args) CollectDottedPathsInExpr(arg, paths, lambdaParams);
+                break;
+            case MethodCallExpr mc:
+                CollectDottedPathsInExpr(mc.Object, paths, lambdaParams);
+                foreach (var arg in mc.Args) CollectDottedPathsInExpr(arg, paths, lambdaParams);
+                break;
+            case LambdaExpr lambda:
+            {
+                // Lambda parameter shadows — add to exclusion set.
+                var innerParams = new HashSet<string>(lambdaParams) { lambda.Parameter };
+                CollectDottedPathsInExpr(lambda.Body, paths, innerParams);
+                break;
+            }
+        }
+    }
+
+    private static string GetRootIdentifier(Expression expr)
+    {
+        return expr switch
+        {
+            IdentifierExpr id => id.Name,
+            FieldAccessExpr fa => GetRootIdentifier(fa.Object),
+            IndexAccessExpr ia => GetRootIdentifier(ia.Object),
+            _ => "",
+        };
     }
 
     private void EmitMembers(StructEmitContext ctx, IReadOnlyList<MemberDecl> members)
@@ -253,11 +416,41 @@ public sealed class BytecodeEmitter
                 ctx.Builder.EmitU8(boolLit.Value ? (byte)1 : (byte)0);
                 break;
             default:
-                // For complex expressions, use i64 type tag with 0 as placeholder.
-                ctx.Builder.EmitU8(0);
-                ctx.Builder.EmitI64(0);
+                // Try to resolve enum-qualified values like ElfClass.ELFCLASS64
+                if (TryResolveEnumValue(expr, out long enumVal))
+                {
+                    ctx.Builder.EmitU8(0); // type tag: i64
+                    ctx.Builder.EmitI64(enumVal);
+                }
+                else if (TryEvalConstant(expr, out long constVal))
+                {
+                    ctx.Builder.EmitU8(0);
+                    ctx.Builder.EmitI64(constVal);
+                }
+                else
+                {
+                    ctx.Builder.EmitU8(0);
+                    ctx.Builder.EmitI64(0);
+                }
                 break;
         }
+    }
+
+    private bool TryResolveEnumValue(Expression expr, out long value)
+    {
+        value = 0;
+        if (expr is FieldAccessExpr fa && fa.Object is IdentifierExpr id)
+        {
+            if (_typeEnv.Enums.TryGetValue(id.Name, out var enumDecl))
+            {
+                foreach (var variant in enumDecl.Variants)
+                {
+                    if (variant.Name == fa.FieldName && TryEvalConstant(variant.Value, out value))
+                        return true;
+                }
+            }
+        }
+        return false;
     }
 
     // ─── Primitive reads ──────────────────────────────────────────────
@@ -581,6 +774,21 @@ public sealed class BytecodeEmitter
         ctx.Builder.Emit(Opcode.CallStruct);
         ctx.Builder.EmitU16((ushort)structIdx);
         ctx.Builder.EmitU8((byte)named.Arguments.Count);
+
+        // Emit CopyChildField for any dotted paths referencing this child's fields.
+        string parentFieldName = ctx.GetFieldName(fieldId);
+        string prefix = parentFieldName + ".";
+        foreach (var kv in ctx.FieldIndices)
+        {
+            if (kv.Key.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                string childFieldName = kv.Key.Substring(prefix.Length);
+                ushort childNameIdx = _masterBuilder.InternString(childFieldName);
+                ctx.Builder.Emit(Opcode.CopyChildField);
+                ctx.Builder.EmitU16(childNameIdx);
+                ctx.Builder.EmitU16(kv.Value);
+            }
+        }
 
         ctx.Builder.Emit(Opcode.EmitStructEnd);
     }
@@ -916,11 +1124,25 @@ public sealed class BytecodeEmitter
 
     private void EmitFieldAccess(StructEmitContext ctx, FieldAccessExpr fa)
     {
-        // Flatten to a dotted path and intern it.
+        // Flatten to a dotted path and check if it was pre-allocated.
         string path = FlattenFieldPath(fa);
-        ushort nameIdx = _masterBuilder.InternString(path);
-        ctx.Builder.Emit(Opcode.PushFieldVal);
-        ctx.Builder.EmitU16(nameIdx);
+        if (ctx.FieldIndices.TryGetValue(path, out ushort fid))
+        {
+            ctx.Builder.Emit(Opcode.PushFieldVal);
+            ctx.Builder.EmitU16(fid);
+        }
+        else if (TryResolveEnumValue(fa, out long enumVal))
+        {
+            ctx.Builder.Emit(Opcode.PushConstI64);
+            ctx.Builder.EmitI64(enumVal);
+        }
+        else
+        {
+            // Fallback for unresolved paths — will likely return zero at runtime.
+            ushort nameIdx = _masterBuilder.InternString(path);
+            ctx.Builder.Emit(Opcode.PushFieldVal);
+            ctx.Builder.EmitU16(nameIdx);
+        }
     }
 
     private static string FlattenFieldPath(Expression expr)

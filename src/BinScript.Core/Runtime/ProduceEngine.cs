@@ -666,6 +666,7 @@ public sealed class ProduceEngine
             Opcode.ReadBytesDyn => 2, Opcode.ReadStringDyn => 3, Opcode.ReadBits => 3, Opcode.ReadBit => 2,
             Opcode.PushConstI64 or Opcode.PushConstF64 => 8,
             Opcode.PushConstStr or Opcode.PushFieldVal or Opcode.PushParam or Opcode.StoreFieldVal or Opcode.PushFileParam => 2,
+            Opcode.CopyChildField => 4,  // childFieldNameIdx(2) + dstFieldId(2)
             Opcode.PushRuntimeVar => 1, Opcode.PushIndex => 0,
             >= Opcode.OpAdd and <= Opcode.OpNeg => 0,
             Opcode.FnSizeOf or Opcode.FnOffsetOf or Opcode.FnCount or Opcode.FnStrLen => 2,

@@ -721,6 +721,29 @@ public sealed class ParseEngine
                     break;
                 }
 
+                case Opcode.CopyChildField:
+                {
+                    ushort childFieldNameIdx = ReadU16(bytecode, ref ip);
+                    ushort dstFieldId = ReadU16(bytecode, ref ip);
+                    if (ctx.LastChildFieldTable != null && ctx.LastChildStructIndex >= 0)
+                    {
+                        string childFieldName = program.GetString(childFieldNameIdx);
+                        var childMeta = program.Structs[ctx.LastChildStructIndex];
+                        for (int fi = 0; fi < childMeta.Fields.Length; fi++)
+                        {
+                            if (program.GetString(childMeta.Fields[fi].NameIndex) == childFieldName)
+                            {
+                                fieldTable.SetValue(dstFieldId, ctx.LastChildFieldTable.GetValue((ushort)fi));
+                                fieldTable.SetOffset(dstFieldId, ctx.LastChildFieldTable.GetOffset((ushort)fi));
+                                fieldTable.SetSize(dstFieldId, ctx.LastChildFieldTable.GetSize((ushort)fi));
+                                fieldTable.SetArrayCount(dstFieldId, ctx.LastChildFieldTable.GetArrayCount((ushort)fi));
+                                break;
+                            }
+                        }
+                    }
+                    break;
+                }
+
                 // ─── Arithmetic/Logic ──────────────────────────────
                 case Opcode.OpAdd: ExpressionEvaluator.Add(ctx); break;
                 case Opcode.OpSub: ExpressionEvaluator.Sub(ctx); break;
@@ -1012,6 +1035,8 @@ public sealed class ParseEngine
         }
 
         ctx.PopParams();
+        ctx.LastChildFieldTable = fieldTable;
+        ctx.LastChildStructIndex = structIndex;
         ctx.PopFieldTable();
         ctx.CurrentStructIndex = savedStructIndex;
         ctx.DecrementStructDepth(structIndex);
@@ -1092,6 +1117,7 @@ public sealed class ParseEngine
             Opcode.PushConstI64 or Opcode.PushConstF64 => 8,
             Opcode.PushConstStr or Opcode.PushFieldVal or Opcode.PushParam or
             Opcode.StoreFieldVal or Opcode.PushFileParam => 2,
+            Opcode.CopyChildField => 2 + 2,    // childFieldNameIdx + dstFieldId
             Opcode.PushRuntimeVar => 1,
             Opcode.PushIndex => 0,
 

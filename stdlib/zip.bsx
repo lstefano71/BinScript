@@ -162,22 +162,12 @@ struct DataDescriptor {
         eocd: EndOfCentralDir,
     },
 
-    // Re-read key EOCD values as hidden flat fields so they can be
-    // referenced directly (dotted access like eocd.cd_offset is not
-    // supported by the runtime).
-    @at(@input_size - 12) {
-        @hidden _cd_entries: u16,
-    },
-    @at(@input_size - 6) {
-        @hidden _cd_offset: u32,
-    },
-
     // Read central directory entries at the offset specified by EOCD
-    @at(_cd_offset) {
-        central_dir: CentralDirEntry[_cd_entries],
+    @at(eocd.cd_offset) {
+        central_dir: CentralDirEntry[eocd.cd_entries_total],
     },
 
     // Local file entries are sequential from offset 0
     // (cursor is at 0 since @at blocks restore position)
-    local_files: LocalFileEntry[_cd_entries],
+    local_files: LocalFileEntry[eocd.cd_entries_total],
 }

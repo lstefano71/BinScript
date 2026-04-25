@@ -128,4 +128,7 @@ public enum Opcode : byte
     ReadPtrU32 = 0x74,
     ReadPtrU64 = 0x75,
     EmitNull = 0x76,
+
+    // Cross-struct field promotion (dotted access a.b)
+    CopyChildField = 0x77,   // u16 srcFieldId, u16 dstFieldId — copy from last child field table to parent
 }

@@ -1267,4 +1267,70 @@ public class ParseEngineTests
         using var doc = JsonDocument.Parse(json);
         Assert.Equal("ok", doc.RootElement.GetProperty("name").GetString());
     }
+
+    // ─── Dotted field access ──────────────────────────────────────────
+
+    [Fact]
+    public void DottedAccess_ChildFieldUsedInExpression()
+    {
+        var source = @"
+struct Inner {
+    value: u16
+}
+@root struct Root {
+    inner: Inner
+    @let count = inner.value
+    items: u8[count]
+}";
+        var program = Compile(source);
+        // inner.value = 3 (u16 LE), then 3 u8 items
+        var data = new byte[] { 3, 0, 0xAA, 0xBB, 0xCC };
+        var json = ParseToJson(program, data);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal(3, doc.RootElement.GetProperty("items").GetArrayLength());
+    }
+
+    [Fact]
+    public void DottedAccess_ChildFieldInMatchDiscriminant()
+    {
+        var source = @"
+enum Kind : u8 { A = 1, B = 2 }
+struct Header {
+    kind: Kind
+}
+@root struct Root {
+    header: Header
+    body: match(header.kind) {
+        Kind.A => u32,
+        Kind.B => u16,
+    }
+}";
+        var program = Compile(source);
+        // header.kind = 2 (Kind.B), body = u16 (0x1234)
+        var data = new byte[] { 2, 0x34, 0x12 };
+        var json = ParseToJson(program, data);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal(0x1234, doc.RootElement.GetProperty("body").GetInt32());
+    }
+
+    [Fact]
+    public void DottedAccess_EnumQualifiedInMatchArm()
+    {
+        var source = @"
+enum Tag : u8 { Small = 1, Big = 2 }
+struct Hdr { tag: Tag }
+@root struct Root {
+    hdr: Hdr
+    payload: match(hdr.tag) {
+        Tag.Small => u8,
+        Tag.Big => u32,
+    }
+}";
+        var program = Compile(source);
+        // Tag.Big = 2, payload = u32 (0xDEADBEEF)
+        var data = new byte[] { 2, 0xEF, 0xBE, 0xAD, 0xDE };
+        var json = ParseToJson(program, data);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal(unchecked((long)0xDEADBEEF), doc.RootElement.GetProperty("payload").GetInt64());
+    }
 }

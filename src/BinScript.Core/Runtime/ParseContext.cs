@@ -39,6 +39,10 @@ public sealed class ParseContext
     // Current struct index being executed
     public int CurrentStructIndex { get; set; } = -1;
 
+    // Array element storage for .find()/.any()/.all() methods
+    // Maps field_id → list of per-element field tables (cloned after each struct array element)
+    private readonly Dictionary<ushort, List<FieldValueTable>> _arrayElements = new();
+
     public ParseContext(ReadOnlyMemory<byte> input)
     {
         Input = input;
@@ -77,6 +81,10 @@ public sealed class ParseContext
     public FieldValueTable PopFieldTable() => _fieldTableStack.Pop();
     public FieldValueTable CurrentFieldTable => _fieldTableStack.Peek();
 
+    // Last child field table — captured at end of ExecuteStruct for CopyChildField
+    public FieldValueTable? LastChildFieldTable { get; set; }
+    public int LastChildStructIndex { get; set; } = -1;
+
     // Parameter operations
     public void PushParams(StackValue[] parameters) => _paramStack.Push(parameters);
     public StackValue[] PopParams() => _paramStack.Pop();
@@ -100,5 +108,22 @@ public sealed class ParseContext
             _structDepth[structIndex] = d - 1;
         else
             _structDepth.Remove(structIndex);
+    }
+
+    // Array element storage
+    public void InitArrayStore(ushort fieldId)
+    {
+        _arrayElements[fieldId] = new List<FieldValueTable>();
+    }
+
+    public void StoreArrayElement(ushort fieldId, FieldValueTable table)
+    {
+        if (_arrayElements.TryGetValue(fieldId, out var list))
+            list.Add(table.Clone());
+    }
+
+    public List<FieldValueTable>? GetArrayElements(ushort fieldId)
+    {
+        return _arrayElements.TryGetValue(fieldId, out var list) ? list : null;
     }
 }

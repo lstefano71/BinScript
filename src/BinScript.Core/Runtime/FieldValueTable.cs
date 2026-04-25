@@ -66,4 +66,14 @@ public sealed class FieldValueTable
                 $"Field ID {fieldId} exceeds field table capacity {_values.Length}.");
         }
     }
+
+    public FieldValueTable Clone()
+    {
+        var clone = new FieldValueTable(_values.Length);
+        Array.Copy(_values, clone._values, _values.Length);
+        Array.Copy(_offsets, clone._offsets, _offsets.Length);
+        Array.Copy(_sizes, clone._sizes, _sizes.Length);
+        Array.Copy(_arrayCounts, clone._arrayCounts, _arrayCounts.Length);
+        return clone;
+    }
 }

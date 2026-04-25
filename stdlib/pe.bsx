@@ -1,37 +1,498 @@
 @default_endian(little)
 
 @coverage(partial)
-@root struct PeFile {
-    e_magic: u16 = 0x5A4D,
-    e_cblp: u16,
-    e_cp: u16,
-    e_crlc: u16,
-    e_cparhdr: u16,
-    e_minalloc: u16,
-    e_maxalloc: u16,
-    e_ss: u16,
-    e_sp: u16,
-    e_csum: u16,
-    e_ip: u16,
-    e_cs: u16,
-    e_lfarlc: u16,
-    e_ovno: u16,
-    e_res: bytes[8],
-    e_oemid: u16,
-    e_oeminfo: u16,
-    e_res2: bytes[20],
-    e_lfanew: u32,
-    @seek(e_lfanew)
-    pe_signature: u32 = 0x00004550,
-    coff_header: CoffHeader,
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum Machine : u16 {
+    Unknown = 0x0000,
+    I386    = 0x014C,
+    R3000   = 0x0162,
+    R4000   = 0x0166,
+    R10000  = 0x0168,
+    WCEMIPSV2 = 0x0169,
+    Alpha   = 0x0184,
+    SH3     = 0x01A2,
+    SH3DSP  = 0x01A3,
+    SH3E    = 0x01CB,
+    SH4     = 0x01C6,
+    SH5     = 0x01C8,
+    ARM     = 0x01C0,
+    Thumb   = 0x01C2,
+    ARMNT   = 0x01C4,
+    AM33    = 0x01D3,
+    PowerPC = 0x01F0,
+    PowerPCFP = 0x01F1,
+    IA64    = 0x0200,
+    MIPS16  = 0x0266,
+    Alpha64 = 0x0284,
+    MIPSFPU = 0x0366,
+    MIPSFPU16 = 0x0466,
+    Tricore = 0x0520,
+    CEF     = 0x0CEF,
+    EBC     = 0x0EBC,
+    AMD64   = 0x8664,
+    M32R    = 0x9041,
+    ARM64   = 0xAA64,
+    CEE     = 0xC0EE,
 }
 
+enum Subsystem : u16 {
+    Unknown                = 0,
+    Native                 = 1,
+    WindowsGui             = 2,
+    WindowsCui             = 3,
+    OS2Cui                 = 5,
+    PosixCui               = 7,
+    NativeWindows          = 8,
+    WindowsCEGui           = 9,
+    EfiApplication         = 10,
+    EfiBootServiceDriver   = 11,
+    EfiRuntimeDriver       = 12,
+    EfiRom                 = 13,
+    Xbox                   = 14,
+    WindowsBootApplication = 16,
+}
+
+enum DebugType : u32 {
+    Unknown       = 0,
+    Coff          = 1,
+    CodeView      = 2,
+    Fpo           = 3,
+    Misc          = 4,
+    Exception     = 5,
+    Fixup         = 6,
+    BorlandTds    = 9,
+    Clsid         = 11,
+    VcFeature     = 12,
+    Pogo          = 13,
+    Iltcg         = 14,
+    Mpx           = 15,
+    Repro         = 16,
+    ExDllCharacteristics = 20,
+}
+
+// ---------------------------------------------------------------------------
+// Bits structs (bitfield flags)
+// ---------------------------------------------------------------------------
+
+bits struct CoffCharacteristics : u16 {
+    relocs_stripped:         bit,   // 0
+    executable_image:        bit,   // 1
+    line_nums_stripped:      bit,   // 2
+    local_syms_stripped:     bit,   // 3
+    aggressive_ws_trim:      bit,   // 4
+    large_address_aware:     bit,   // 5
+    _reserved_6:             bit,   // 6
+    bytes_reversed_lo:       bit,   // 7
+    machine_32bit:           bit,   // 8
+    debug_stripped:           bit,   // 9
+    removable_run_from_swap: bit,   // 10
+    net_run_from_swap:       bit,   // 11
+    system_file:             bit,   // 12
+    dll:                     bit,   // 13
+    up_system_only:          bit,   // 14
+    bytes_reversed_hi:       bit,   // 15
+}
+
+bits struct DllCharacteristics : u16 {
+    _reserved_0:             bit,   // 0
+    _reserved_1:             bit,   // 1
+    _reserved_2:             bit,   // 2
+    _reserved_3:             bit,   // 3
+    _reserved_4:             bit,   // 4
+    high_entropy_va:         bit,   // 5
+    dynamic_base:            bit,   // 6
+    force_integrity:         bit,   // 7
+    nx_compat:               bit,   // 8
+    no_isolation:            bit,   // 9
+    no_seh:                  bit,   // 10
+    no_bind:                 bit,   // 11
+    appcontainer:            bit,   // 12
+    wdm_driver:              bit,   // 13
+    guard_cf:                bit,   // 14
+    terminal_server_aware:   bit,   // 15
+}
+
+bits struct SectionCharacteristics : u32 {
+    _reserved_0:             bit,   // 0
+    _reserved_1:             bit,   // 1
+    _reserved_2:             bit,   // 2
+    type_no_pad:             bit,   // 3
+    _reserved_4:             bit,   // 4
+    cnt_code:                bit,   // 5
+    cnt_initialized_data:    bit,   // 6
+    cnt_uninitialized_data:  bit,   // 7
+    lnk_other:               bit,   // 8
+    lnk_info:                bit,   // 9
+    _reserved_10:            bit,   // 10
+    lnk_remove:              bit,   // 11
+    lnk_comdat:              bit,   // 12
+    _reserved_13:            bit,   // 13
+    no_defer_spec_exc:       bit,   // 14
+    gprel:                   bit,   // 15
+    _reserved_16:            bit,   // 16
+    mem_purgeable:           bit,   // 17
+    mem_16bit:               bit,   // 18
+    mem_locked:              bit,   // 19
+    mem_preload:             bit,   // 20
+    _align:                  bits[4], // 21-24
+    lnk_nreloc_ovfl:         bit,   // 25
+    mem_discardable:         bit,   // 26
+    mem_not_cached:          bit,   // 27
+    mem_not_paged:           bit,   // 28
+    mem_shared:              bit,   // 29
+    mem_execute:             bit,   // 30
+    mem_read:                bit,   // 31
+    mem_write:               bit,   // 31
+}
+
+// ---------------------------------------------------------------------------
+// Map: RVA to file offset conversion
+// ---------------------------------------------------------------------------
+
+@map rva_to_offset(rva: u32, sections: SectionHeader[]): u32 = {
+    @let s = sections.find(s => rva >= s.virtual_address
+                              && rva < s.virtual_address + s.virtual_size),
+    s.pointer_to_raw_data + (rva - s.virtual_address)
+}
+
+// ---------------------------------------------------------------------------
+// Root: PeFile
+// ---------------------------------------------------------------------------
+
+@root struct PeFile {
+    dos_header: DosHeader,
+
+    @seek(dos_header.e_lfanew)
+    pe_signature: u32 = 0x00004550,
+
+    coff_header: CoffHeader,
+
+    @let num_sections = coff_header.number_of_sections,
+    optional_header: match(coff_header.size_of_optional_header) {
+        0 => bytes[0],
+        _ => OptionalHeader,
+    },
+
+    sections: SectionHeader[num_sections],
+
+    // Export directory (data_dir index 0)
+    @at(rva_to_offset(optional_header.data_directories[0].virtual_address, sections))
+        when optional_header.data_directories[0].virtual_address != 0
+            && optional_header.data_directories[0].size != 0 {
+        export_directory: ExportDirectory(sections),
+    },
+
+    // Import directory (data_dir index 1)
+    @at(rva_to_offset(optional_header.data_directories[1].virtual_address, sections))
+        when optional_header.data_directories[1].virtual_address != 0
+            && optional_header.data_directories[1].size != 0 {
+        import_directory: ImportDescriptor(optional_header.magic, sections)[]
+            @until_sentinel(e => e.import_lookup_table_rva == 0),
+    },
+
+    // Resource directory (data_dir index 2)
+    @let resource_rva = optional_header.data_directories[2].virtual_address,
+    @let resource_offset = rva_to_offset(resource_rva, sections),
+    @at(resource_offset)
+        when resource_rva != 0
+            && optional_header.data_directories[2].size != 0 {
+        resource_directory: ResourceDirectory(resource_offset),
+    },
+
+    // Debug directory (data_dir index 6)
+    @at(rva_to_offset(optional_header.data_directories[6].virtual_address, sections))
+        when optional_header.data_directories[6].virtual_address != 0
+            && optional_header.data_directories[6].size != 0 {
+        @let debug_count = optional_header.data_directories[6].size / 28,
+        debug_directory: DebugDirectoryEntry[debug_count],
+    },
+}
+
+// ---------------------------------------------------------------------------
+// DOS Header
+// ---------------------------------------------------------------------------
+
+struct DosHeader {
+    e_magic:    u16 = 0x5A4D,
+    e_cblp:     u16,
+    e_cp:       u16,
+    e_crlc:     u16,
+    e_cparhdr:  u16,
+    e_minalloc: u16,
+    e_maxalloc: u16,
+    e_ss:       u16,
+    e_sp:       u16,
+    e_csum:     u16,
+    e_ip:       u16,
+    e_cs:       u16,
+    e_lfarlc:   u16,
+    e_ovno:     u16,
+    e_res:      bytes[8],
+    e_oemid:    u16,
+    e_oeminfo:  u16,
+    e_res2:     bytes[20],
+    e_lfanew:   u32,
+}
+
+// ---------------------------------------------------------------------------
+// COFF Header
+// ---------------------------------------------------------------------------
+
 struct CoffHeader {
-    machine: u16,
-    number_of_sections: u16,
-    time_date_stamp: u32,
+    machine:                 Machine,
+    number_of_sections:      u16,
+    time_date_stamp:         u32,
     pointer_to_symbol_table: u32,
-    number_of_symbols: u32,
+    number_of_symbols:       u32,
     size_of_optional_header: u16,
-    characteristics: u16,
+    characteristics:         CoffCharacteristics,
+}
+
+// ---------------------------------------------------------------------------
+// Optional Header (PE32 / PE32+)
+// ---------------------------------------------------------------------------
+
+struct OptionalHeader {
+    magic: u16,
+    body: match(magic) {
+        0x10B => OptionalHeader32,
+        0x20B => OptionalHeader64,
+    },
+    data_directories: DataDirectory[body.number_of_rva_and_sizes],
+}
+
+struct OptionalHeader32 {
+    // Standard fields
+    major_linker_version:    u8,
+    minor_linker_version:    u8,
+    size_of_code:            u32,
+    size_of_initialized_data:   u32,
+    size_of_uninitialized_data: u32,
+    address_of_entry_point:  u32,
+    base_of_code:            u32,
+    base_of_data:            u32,
+
+    // Windows-specific fields
+    image_base:              u32,
+    section_alignment:       u32,
+    file_alignment:          u32,
+    major_os_version:        u16,
+    minor_os_version:        u16,
+    major_image_version:     u16,
+    minor_image_version:     u16,
+    major_subsystem_version: u16,
+    minor_subsystem_version: u16,
+    win32_version_value:     u32,
+    size_of_image:           u32,
+    size_of_headers:         u32,
+    checksum:                u32,
+    subsystem:               Subsystem,
+    dll_characteristics:     DllCharacteristics,
+    size_of_stack_reserve:   u32,
+    size_of_stack_commit:    u32,
+    size_of_heap_reserve:    u32,
+    size_of_heap_commit:     u32,
+    loader_flags:            u32,
+    number_of_rva_and_sizes: u32,
+}
+
+struct OptionalHeader64 {
+    // Standard fields
+    major_linker_version:    u8,
+    minor_linker_version:    u8,
+    size_of_code:            u32,
+    size_of_initialized_data:   u32,
+    size_of_uninitialized_data: u32,
+    address_of_entry_point:  u32,
+    base_of_code:            u32,
+
+    // Windows-specific fields
+    image_base:              u64,
+    section_alignment:       u32,
+    file_alignment:          u32,
+    major_os_version:        u16,
+    minor_os_version:        u16,
+    major_image_version:     u16,
+    minor_image_version:     u16,
+    major_subsystem_version: u16,
+    minor_subsystem_version: u16,
+    win32_version_value:     u32,
+    size_of_image:           u32,
+    size_of_headers:         u32,
+    checksum:                u32,
+    subsystem:               Subsystem,
+    dll_characteristics:     DllCharacteristics,
+    size_of_stack_reserve:   u64,
+    size_of_stack_commit:    u64,
+    size_of_heap_reserve:    u64,
+    size_of_heap_commit:     u64,
+    loader_flags:            u32,
+    number_of_rva_and_sizes: u32,
+}
+
+// ---------------------------------------------------------------------------
+// Data Directory
+// ---------------------------------------------------------------------------
+
+struct DataDirectory {
+    virtual_address: u32,
+    size:            u32,
+}
+
+// ---------------------------------------------------------------------------
+// Section Header
+// ---------------------------------------------------------------------------
+
+struct SectionHeader {
+    name:                    fixed_string[8],
+    virtual_size:            u32,
+    virtual_address:         u32,
+    size_of_raw_data:        u32,
+    pointer_to_raw_data:     u32,
+    pointer_to_relocations:  u32,
+    pointer_to_line_numbers: u32,
+    number_of_relocations:   u16,
+    number_of_line_numbers:  u16,
+    characteristics:         SectionCharacteristics,
+}
+
+// ---------------------------------------------------------------------------
+// Export Directory (data_dir[0])
+// ---------------------------------------------------------------------------
+
+struct ExportDirectory(sections) {
+    export_flags:            u32,
+    time_date_stamp:         u32,
+    major_version:           u16,
+    minor_version:           u16,
+    name_rva:                u32,
+    ordinal_base:            u32,
+    number_of_functions:     u32,
+    number_of_names:         u32,
+    address_of_functions:    u32,
+    address_of_names:        u32,
+    address_of_name_ordinals: u32,
+
+    @at(rva_to_offset(name_rva, sections)) {
+        dll_name: cstring,
+    },
+}
+
+// ---------------------------------------------------------------------------
+// Import Directory (data_dir[1])
+// ---------------------------------------------------------------------------
+
+struct ImportDescriptor(magic, sections) {
+    import_lookup_table_rva: u32,
+    time_date_stamp:         u32,
+    forwarder_chain:         u32,
+    name_rva:                u32,
+    import_address_table_rva: u32,
+
+    @at(rva_to_offset(name_rva, sections)) when name_rva != 0 {
+        name: cstring,
+    },
+
+    @at(rva_to_offset(import_lookup_table_rva, sections))
+        when import_lookup_table_rva != 0 {
+        entries: match(magic) {
+            0x10B => ImportLookupEntry32(sections)[] @until_sentinel(e => e.value == 0),
+            0x20B => ImportLookupEntry64(sections)[] @until_sentinel(e => e.value == 0),
+        },
+    },
+}
+
+struct ImportLookupEntry32(sections) {
+    value: u32,
+    @at(rva_to_offset(value & 0x7FFFFFFF, sections))
+        when value & 0x80000000 == 0
+            && value != 0 {
+        hint: u16,
+        func_name: cstring,
+    },
+}
+
+struct ImportLookupEntry64(sections) {
+    value: u64,
+    @at(rva_to_offset((value & 0x7FFFFFFF) as u32, sections))
+        when value & 0x8000000000000000 == 0
+            && value != 0 {
+        hint: u16,
+        func_name: cstring,
+    },
+}
+
+// ---------------------------------------------------------------------------
+// Resource Directory (data_dir[2]) — recursive tree
+// ---------------------------------------------------------------------------
+
+struct ResourceDirectory(base_offset) @max_depth(4) {
+    characteristics:         u32,
+    time_date_stamp:         u32,
+    major_version:           u16,
+    minor_version:           u16,
+    number_of_named_entries: u16,
+    number_of_id_entries:    u16,
+    @let total_entries = number_of_named_entries + number_of_id_entries,
+    entries: ResourceEntry(base_offset)[total_entries],
+}
+
+struct ResourceEntry(base_offset) {
+    name_or_id:        u32,
+    offset_to_data:    u32,
+    // Bit 31 of offset_to_data: 1 = subdirectory, 0 = data leaf
+    @let is_subdir = (offset_to_data & 0x80000000) != 0,
+    @let entry_offset = offset_to_data & 0x7FFFFFFF,
+
+    @at(base_offset + entry_offset) {
+        data: match(is_subdir) {
+            true  => ResourceDirectory(base_offset),
+            false => ResourceDataEntry,
+        },
+    },
+}
+
+struct ResourceDataEntry {
+    data_rva:   u32,
+    size:       u32,
+    code_page:  u32,
+    _reserved:  u32,
+}
+
+// ---------------------------------------------------------------------------
+// Debug Directory (data_dir[6])
+// ---------------------------------------------------------------------------
+
+struct DebugDirectoryEntry {
+    characteristics:      u32,
+    time_date_stamp:      u32,
+    major_version:        u16,
+    minor_version:        u16,
+    type:                 DebugType,
+    size_of_data:         u32,
+    address_of_raw_data:  u32,
+    pointer_to_raw_data:  u32,
+
+    // pointer_to_raw_data is a file offset — use directly
+    @at(pointer_to_raw_data) when pointer_to_raw_data != 0 && size_of_data != 0 {
+        debug_data: match(type) {
+            DebugType.CodeView => CvInfoPdb70,
+            _ => bytes[size_of_data],
+        },
+    },
+}
+
+// ---------------------------------------------------------------------------
+// CodeView PDB 7.0 info (RSDS)
+// ---------------------------------------------------------------------------
+
+struct CvInfoPdb70 {
+    cv_signature: fixed_string[4],
+    guid:         bytes[16],
+    age:          u32,
+    pdb_path:     cstring,
 }

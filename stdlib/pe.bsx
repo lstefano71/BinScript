@@ -195,11 +195,10 @@ bits struct SectionCharacteristics : u32 {
     },
 
     // Resource directory (data_dir index 2)
-    @let resource_rva = optional_header.data_directories[2].virtual_address,
-    @let resource_offset = rva_to_offset(resource_rva, sections),
-    @at(resource_offset)
-        when resource_rva != 0
+    @at(rva_to_offset(optional_header.data_directories[2].virtual_address, sections))
+        when optional_header.data_directories[2].virtual_address != 0
             && optional_header.data_directories[2].size != 0 {
+        @let resource_offset = rva_to_offset(optional_header.data_directories[2].virtual_address, sections),
         resource_directory: ResourceDirectory(resource_offset),
     },
 

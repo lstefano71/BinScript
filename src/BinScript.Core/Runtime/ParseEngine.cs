@@ -20,6 +20,7 @@ public sealed class ParseEngine
         public long Index;
         public int BodyStart;       // ip offset within struct for loop body start
         public ArrayLoopKind Kind;
+        public long SentinelCheckpoint; // emitter checkpoint for sentinel rollback
     }
 
     private enum ArrayLoopKind : byte { Count, Until, Sentinel, Greedy }
@@ -93,6 +94,11 @@ public sealed class ParseEngine
         var fieldTable = new FieldValueTable(structMeta.Fields.Length + 16);
         ctx.PushFieldTable(fieldTable);
         ctx.PushParams(parameters);
+        ctx.PushArrayElementScope();
+
+        // Collect any pending param array stores forwarded by the caller
+        var paramArrayStores = ctx.TakePendingParamArrayStores();
+        ctx.PushParamArrayStores(paramArrayStores);
 
         int savedStructIndex = ctx.CurrentStructIndex;
         ctx.CurrentStructIndex = structIndex;
@@ -473,6 +479,24 @@ public sealed class ParseEngine
                 }
 
                 // ─── Control Flow ──────────────────────────────────
+                case Opcode.ForwardArrayStore:
+                {
+                    ushort fieldId = ReadU16(bytecode, ref ip);
+                    ushort dstParamIdx = ReadU16(bytecode, ref ip);
+                    var store = ctx.GetArrayElementStore(fieldId);
+                    if (store != null)
+                        ctx.SetPendingParamArrayStore(dstParamIdx, store);
+                    break;
+                }
+                case Opcode.ForwardParamArrayStore:
+                {
+                    ushort srcParamIdx = ReadU16(bytecode, ref ip);
+                    ushort dstParamIdx = ReadU16(bytecode, ref ip);
+                    var store = ctx.GetParamArrayStore(srcParamIdx);
+                    if (store != null)
+                        ctx.SetPendingParamArrayStore(dstParamIdx, store);
+                    break;
+                }
                 case Opcode.CallStruct:
                 {
                     ushort sid = ReadU16(bytecode, ref ip);
@@ -917,6 +941,32 @@ public sealed class ParseEngine
                     break;
                 }
 
+                // ─── Sentinel checkpoint/check ─────────────────────
+                case Opcode.SentinelSave:
+                {
+                    if (arrayStack.Count > 0)
+                    {
+                        var state = arrayStack.Pop();
+                        state.SentinelCheckpoint = emitter.SaveCheckpoint();
+                        arrayStack.Push(state);
+                    }
+                    break;
+                }
+                case Opcode.SentinelCheck:
+                {
+                    var predResult = ctx.Pop();
+                    if (predResult.AsBool() && arrayStack.Count > 0)
+                    {
+                        var state = arrayStack.Pop();
+                        // Rollback the emitter output for this sentinel element
+                        emitter.RollbackToCheckpoint(state.SentinelCheckpoint);
+                        ctx.PopArrayIndex();
+                        // Skip forward past the rest of the array loop to ArrayEnd
+                        ip = SkipToArrayEnd(bytecode, ip);
+                    }
+                    break;
+                }
+
                 // ─── Array Search (.find/.any/.all) ────────────────
 
                 case Opcode.ArrayStoreElem:
@@ -932,6 +982,22 @@ public sealed class ParseEngine
                     byte mode = bytecode[ip++];
                     var store = ctx.GetArrayElementStore(arrayFieldId)
                         ?? throw new ParseException($"No stored array elements for field {arrayFieldId}.");
+                    ctx.PushSearch(new ArraySearchState
+                    {
+                        Store = store,
+                        CurrentIndex = 0,
+                        MatchedElement = null,
+                        Mode = mode,
+                    });
+                    break;
+                }
+
+                case Opcode.ArraySearchBeginParam:
+                {
+                    ushort paramIdx = ReadU16(bytecode, ref ip);
+                    byte mode = bytecode[ip++];
+                    var store = ctx.GetParamArrayStore(paramIdx)
+                        ?? throw new ParseException($"No forwarded array store for param {paramIdx}.");
                     ctx.PushSearch(new ArraySearchState
                     {
                         Store = store,
@@ -1141,8 +1207,10 @@ public sealed class ParseEngine
         }
 
         ctx.PopParams();
+        ctx.PopParamArrayStores();
         ctx.LastChildFieldTable = fieldTable;
         ctx.LastChildStructIndex = structIndex;
+        ctx.PopArrayElementScope();
         ctx.PopFieldTable();
         ctx.CurrentStructIndex = savedStructIndex;
         ctx.DecrementStructDepth(structIndex);
@@ -1184,6 +1252,9 @@ public sealed class ParseEngine
         return ip;
     }
 
+    private static int SkipToArrayEnd(byte[] bytecode, int ip) =>
+        SkipToArrayEnd(bytecode, ip, bytecode.Length);
+
     // ─── Helper: get operand size for skipping ─────────────────────
     private static int GetOpcodeOperandSize(Opcode op, byte[] bytecode, int ip)
     {
@@ -1204,6 +1275,7 @@ public sealed class ParseEngine
             Opcode.AssertValue => ComputeAssertValueSize(bytecode, ip),
 
             Opcode.CallStruct => 2 + 1,        // struct_id + param_count
+            Opcode.ForwardArrayStore or Opcode.ForwardParamArrayStore => 2 + 2, // src:u16 + dst:u16
             Opcode.Return => 0,
             Opcode.Jump or Opcode.JumpIfFalse or Opcode.JumpIfTrue => 4,
 
@@ -1242,11 +1314,15 @@ public sealed class ParseEngine
 
             // Array search ops
             Opcode.ArrayStoreElem => 2,            // arrayFieldId:u16
-            Opcode.ArraySearchBegin => 2 + 1,      // arrayFieldId:u16 + mode:u8
+            Opcode.ArraySearchBegin or
+            Opcode.ArraySearchBeginParam => 2 + 1, // id:u16 + mode:u8
             Opcode.PushElemField => 2,              // fieldNameIdx:u16
             Opcode.ArraySearchCheck => 4 + 4,       // loopTarget:i32 + notFoundTarget:i32
             Opcode.ArraySearchCopy => 2 + 2,        // srcFieldNameIdx:u16 + dstFieldId:u16
             Opcode.ArraySearchEnd => 0,
+
+            // Sentinel ops (no operands)
+            Opcode.SentinelSave or Opcode.SentinelCheck => 0,
 
             Opcode.MatchBegin or Opcode.MatchEnd => 0,
             Opcode.MatchArmEq => ComputeMatchArmEqSize(bytecode, ip),

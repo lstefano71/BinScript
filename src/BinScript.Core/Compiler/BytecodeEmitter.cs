@@ -222,7 +222,7 @@ public sealed class BytecodeEmitter
         else if (field.Array is UntilArraySpec until)
             CollectDottedPathsInExpr(until.Condition, paths, lambdaParams);
         else if (field.Array is SentinelArraySpec sentinel)
-            CollectDottedPathsInExpr(sentinel.Predicate, paths, lambdaParams);
+            CollectSentinelDottedPaths(sentinel, field.Name, paths, lambdaParams);
         // Also scan struct call arguments
         if (field.Type is NamedTypeRef named)
             foreach (var arg in named.Arguments) CollectDottedPathsInExpr(arg, paths, lambdaParams);
@@ -234,8 +234,51 @@ public sealed class BytecodeEmitter
                 if (arm.Guard is not null) CollectDottedPathsInExpr(arm.Guard, paths, lambdaParams);
                 if (arm.Type is NamedTypeRef namedArm)
                     foreach (var arg in namedArm.Arguments) CollectDottedPathsInExpr(arg, paths, lambdaParams);
+                // Match arm arrays
+                if (arm.Array is CountArraySpec armCount)
+                    CollectDottedPathsInExpr(armCount.Count, paths, lambdaParams);
+                else if (arm.Array is UntilArraySpec armUntil)
+                    CollectDottedPathsInExpr(armUntil.Condition, paths, lambdaParams);
+                else if (arm.Array is SentinelArraySpec armSentinel)
+                    CollectSentinelDottedPaths(armSentinel, field.Name, paths, lambdaParams);
             }
         }
+    }
+
+    /// <summary>
+    /// Collect dotted paths from a sentinel predicate, substituting the lambda param with the field name.
+    /// E.g., <c>@until_sentinel(e =&gt; e.rva == 0)</c> on field "imports" → collects "imports.rva".
+    /// </summary>
+    private void CollectSentinelDottedPaths(SentinelArraySpec sentinel, string fieldName,
+        HashSet<string> paths, HashSet<string> lambdaParams)
+    {
+        var substituted = SubstituteSentinelParam(sentinel.Predicate, sentinel.ParamName, fieldName);
+        CollectDottedPathsInExpr(substituted, paths, lambdaParams);
+    }
+
+    /// <summary>Replace sentinel lambda parameter references with the array field name.</summary>
+    private static Expression SubstituteSentinelParam(Expression expr, string paramName, string fieldName)
+    {
+        return expr switch
+        {
+            IdentifierExpr id when id.Name == paramName
+                => new IdentifierExpr(fieldName, id.Span),
+            BinaryExpr bin
+                => new BinaryExpr(
+                    SubstituteSentinelParam(bin.Left, paramName, fieldName),
+                    bin.Op,
+                    SubstituteSentinelParam(bin.Right, paramName, fieldName),
+                    bin.Span),
+            UnaryExpr un
+                => new UnaryExpr(un.Op, SubstituteSentinelParam(un.Operand, paramName, fieldName), un.Span),
+            FieldAccessExpr fa
+                => new FieldAccessExpr(SubstituteSentinelParam(fa.Object, paramName, fieldName), fa.FieldName, fa.Span),
+            FunctionCallExpr fc
+                => new FunctionCallExpr(fc.FunctionName,
+                    fc.Args.Select(a => SubstituteSentinelParam(a, paramName, fieldName)).ToList(),
+                    fc.Span),
+            _ => expr,
+        };
     }
 
     private void CollectDottedPathsInExpr(Expression expr, HashSet<string> paths, HashSet<string> lambdaParams)
@@ -326,7 +369,16 @@ public sealed class BytecodeEmitter
         {
             case FieldDecl field:
                 if (field.Type is MatchTypeRef mt)
+                {
                     CollectSearchedArrayNamesInExpr(mt.Match.Discriminant, names);
+                    foreach (var arm in mt.Match.Arms)
+                    {
+                        if (arm.Array is CountArraySpec armCas)
+                            CollectSearchedArrayNamesInExpr(armCas.Count, names);
+                        else if (arm.Array is UntilArraySpec armUas)
+                            CollectSearchedArrayNamesInExpr(armUas.Condition, names);
+                    }
+                }
                 if (field.Array is CountArraySpec cas)
                     CollectSearchedArrayNamesInExpr(cas.Count, names);
                 else if (field.Array is UntilArraySpec uas)
@@ -892,6 +944,29 @@ public sealed class BytecodeEmitter
             EmitExpression(ctx, named.Arguments[i]);
         }
 
+        // Forward array stores for arguments that carry searchable arrays.
+        // This must happen after arg pushes but before CallStruct.
+        for (int i = 0; i < named.Arguments.Count; i++)
+        {
+            if (named.Arguments[i] is IdentifierExpr argId)
+            {
+                if (ctx.FieldIndices.TryGetValue(argId.Name, out ushort argFieldId))
+                {
+                    // Forward the field's array store (if any) to child param i
+                    ctx.Builder.Emit(Opcode.ForwardArrayStore);
+                    ctx.Builder.EmitU16(argFieldId);
+                    ctx.Builder.EmitU16((ushort)i);
+                }
+                else if (ctx.ParamIndices.TryGetValue(argId.Name, out ushort argParamIdx))
+                {
+                    // Transitively forward a received param's array store
+                    ctx.Builder.Emit(Opcode.ForwardParamArrayStore);
+                    ctx.Builder.EmitU16(argParamIdx);
+                    ctx.Builder.EmitU16((ushort)i);
+                }
+            }
+        }
+
         ctx.Builder.Emit(Opcode.CallStruct);
         ctx.Builder.EmitU16((ushort)structIdx);
         ctx.Builder.EmitU8((byte)named.Arguments.Count);
@@ -964,8 +1039,17 @@ public sealed class BytecodeEmitter
                     continue;
             }
 
-            // Emit the type read for this arm.
-            EmitFieldRead(ctx, arm.Type, fieldId, modifiers);
+            // Emit the type read for this arm (with optional array wrapping).
+            if (arm.Array is not null)
+            {
+                string parentFieldName = ctx.GetFieldName(fieldId);
+                EmitArrayLoop(ctx, parentFieldName, fieldId, arm.Type, arm.Array, modifiers,
+                    ctx.SearchedArrayNames.Contains(parentFieldName));
+            }
+            else
+            {
+                EmitFieldRead(ctx, arm.Type, fieldId, modifiers);
+            }
 
             // Jump to end of match after arm body.
             ctx.Builder.Emit(Opcode.Jump);
@@ -989,18 +1073,28 @@ public sealed class BytecodeEmitter
 
     private void EmitArrayField(StructEmitContext ctx, FieldDecl field, ushort fieldId)
     {
-        ushort nameIdx = _masterBuilder.InternString(field.Name);
+        EmitArrayLoop(ctx, field.Name, fieldId, field.Type, field.Array!, field.Modifiers,
+            ctx.SearchedArrayNames.Contains(field.Name));
+    }
+
+    /// <summary>
+    /// Shared array loop emission used by both regular array fields and match arm arrays.
+    /// </summary>
+    private void EmitArrayLoop(StructEmitContext ctx, string fieldName, ushort fieldId,
+        TypeReference elemType, ArraySpec arraySpec, FieldModifiers modifiers, bool isSearchTarget)
+    {
+        ushort nameIdx = _masterBuilder.InternString(fieldName);
         ctx.Builder.Emit(Opcode.EmitArrayBegin);
         ctx.Builder.EmitU16(nameIdx);
         ctx.Builder.EmitU16(fieldId);
 
-        switch (field.Array)
+        switch (arraySpec)
         {
             case CountArraySpec countArr:
                 EmitExpression(ctx, countArr.Count);
                 ctx.Builder.Emit(Opcode.ArrayBeginCount);
                 break;
-            case UntilArraySpec untilArr:
+            case UntilArraySpec:
                 ctx.Builder.Emit(Opcode.ArrayBeginUntil);
                 break;
             case SentinelArraySpec:
@@ -1013,22 +1107,33 @@ public sealed class BytecodeEmitter
 
         int loopTop = ctx.Builder.Position;
 
+        // For sentinel arrays, save emitter checkpoint before each element read.
+        if (arraySpec is SentinelArraySpec)
+            ctx.Builder.Emit(Opcode.SentinelSave);
+
         // Emit the field body (the read for one element).
-        EmitFieldRead(ctx, field.Type, fieldId, field.Modifiers);
+        EmitFieldRead(ctx, elemType, fieldId, modifiers);
+
+        // For sentinel arrays, evaluate the predicate BEFORE post-processing.
+        // If the element is the sentinel, rollback the emitter and break.
+        if (arraySpec is SentinelArraySpec sentinel)
+        {
+            var substituted = SubstituteSentinelParam(sentinel.Predicate, sentinel.ParamName, fieldName);
+            EmitExpression(ctx, substituted);
+            ctx.Builder.Emit(Opcode.SentinelCheck);
+        }
 
         // If this array is a target of .find()/.any()/.all(), snapshot element field tables.
-        if (ctx.SearchedArrayNames.Contains(field.Name))
+        if (isSearchTarget)
         {
             ctx.Builder.Emit(Opcode.ArrayStoreElem);
             ctx.Builder.EmitU16(fieldId);
         }
 
-        EmitFieldPostProcessing(ctx, field, fieldId);
-
         ctx.Builder.Emit(Opcode.ArrayNext);
 
         // For until arrays, emit the condition check.
-        if (field.Array is UntilArraySpec untilSpec)
+        if (arraySpec is UntilArraySpec untilSpec)
         {
             EmitExpression(ctx, untilSpec.Condition);
         }
@@ -1064,14 +1169,28 @@ public sealed class BytecodeEmitter
     private void EmitArraySearchLetBinding(StructEmitContext ctx, string letName, ushort fieldId, MethodCallExpr mc)
     {
         string arrayName = ((IdentifierExpr)mc.Object).Name;
-        ushort arrayFieldId = ctx.FieldIndices[arrayName];
 
         byte mode = (byte)(mc.MethodName == "find" ? 0 : 1);
 
-        // ArraySearchBegin
-        ctx.Builder.Emit(Opcode.ArraySearchBegin);
-        ctx.Builder.EmitU16(arrayFieldId);
-        ctx.Builder.EmitU8(mode);
+        // Emit the appropriate search-begin opcode depending on whether the
+        // array is a local field or a struct parameter.
+        if (ctx.FieldIndices.TryGetValue(arrayName, out ushort arrayFieldId))
+        {
+            ctx.Builder.Emit(Opcode.ArraySearchBegin);
+            ctx.Builder.EmitU16(arrayFieldId);
+            ctx.Builder.EmitU8(mode);
+        }
+        else if (ctx.ParamIndices.TryGetValue(arrayName, out ushort paramIdx))
+        {
+            ctx.Builder.Emit(Opcode.ArraySearchBeginParam);
+            ctx.Builder.EmitU16(paramIdx);
+            ctx.Builder.EmitU8(mode);
+        }
+        else
+        {
+            throw new InvalidOperationException(
+                $"Array '{arrayName}' for .{mc.MethodName}() is not a field or parameter in current scope.");
+        }
 
         int loopStart = ctx.Builder.Position;
 

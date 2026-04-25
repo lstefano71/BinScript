@@ -55,8 +55,14 @@ public sealed class ParseContext
     // Current struct index being executed
     public int CurrentStructIndex { get; set; } = -1;
 
-    // Array element storage for .find()/.any()/.all() — keyed by array's field ID
-    private readonly Dictionary<ushort, ArrayElementStore> _arrayElements = new();
+    // Array element storage for .find()/.any()/.all() — keyed by array's field ID, per scope
+    private readonly Stack<Dictionary<ushort, ArrayElementStore>> _arrayElementsStack = new();
+
+    // Pending forwarded array stores for the next CallStruct — keyed by destination param index
+    private readonly Dictionary<int, ArrayElementStore> _pendingParamArrayStores = new();
+
+    // Per-call-frame param array stores (pushed/popped with struct calls)
+    private readonly Stack<Dictionary<int, ArrayElementStore>> _paramArrayStoreStack = new();
 
     // Search state stack for nested .find()/.any()/.all() calls
     private readonly Stack<ArraySearchState> _searchStack = new();
@@ -128,21 +134,62 @@ public sealed class ParseContext
             _structDepth.Remove(structIndex);
     }
 
-    // Array element storage
+    // Array element storage (scope-aware)
+    public void PushArrayElementScope() => _arrayElementsStack.Push(new Dictionary<ushort, ArrayElementStore>());
+    public void PopArrayElementScope() => _arrayElementsStack.Pop();
+
     public void StoreArrayElement(ushort fieldId)
     {
         if (LastChildFieldTable == null) return;
-        if (!_arrayElements.TryGetValue(fieldId, out var store))
+        var scope = _arrayElementsStack.Peek();
+        if (!scope.TryGetValue(fieldId, out var store))
         {
             store = new ArrayElementStore { StructIndex = LastChildStructIndex };
-            _arrayElements[fieldId] = store;
+            scope[fieldId] = store;
         }
         store.Elements.Add(LastChildFieldTable.Clone());
     }
 
     public ArrayElementStore? GetArrayElementStore(ushort fieldId)
     {
-        return _arrayElements.TryGetValue(fieldId, out var store) ? store : null;
+        // Search current scope first, then parent scopes
+        foreach (var scope in _arrayElementsStack)
+        {
+            if (scope.TryGetValue(fieldId, out var store))
+                return store;
+        }
+        return null;
+    }
+
+    // Forwarding: parent → child array store passing
+    public void SetPendingParamArrayStore(int dstParamIdx, ArrayElementStore store)
+    {
+        _pendingParamArrayStores[dstParamIdx] = store;
+    }
+
+    public Dictionary<int, ArrayElementStore> TakePendingParamArrayStores()
+    {
+        if (_pendingParamArrayStores.Count == 0)
+            return new Dictionary<int, ArrayElementStore>();
+        var result = new Dictionary<int, ArrayElementStore>(_pendingParamArrayStores);
+        _pendingParamArrayStores.Clear();
+        return result;
+    }
+
+    // Per-call-frame param array stores
+    public void PushParamArrayStores(Dictionary<int, ArrayElementStore> stores)
+        => _paramArrayStoreStack.Push(stores);
+    public void PopParamArrayStores() => _paramArrayStoreStack.Pop();
+
+    public ArrayElementStore? GetParamArrayStore(int paramIdx)
+    {
+        if (_paramArrayStoreStack.Count > 0)
+        {
+            var frame = _paramArrayStoreStack.Peek();
+            if (frame.TryGetValue(paramIdx, out var store))
+                return store;
+        }
+        return null;
     }
 
     // Search state operations

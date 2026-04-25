@@ -119,6 +119,8 @@ public enum Opcode : byte
     ArraySearchCheck = 0xD9,   // i32 loopTarget, i32 notFoundTarget — check pred, advance/break
     ArraySearchCopy = 0xDA,    // u16 srcFieldNameIdx, u16 dstFieldId — copy matched field to parent
     ArraySearchEnd = 0xDB,     // (no operands) — pop search state
+    SentinelSave = 0xDC,       // (no operands) — save emitter checkpoint before element read
+    SentinelCheck = 0xDD,      // (no operands) — pop bool; if true → rollback emitter, break array
 
     // Match
     MatchBegin = 0xE0,
@@ -139,4 +141,9 @@ public enum Opcode : byte
 
     // Cross-struct field promotion (dotted access a.b)
     CopyChildField = 0x77,   // u16 srcFieldId, u16 dstFieldId — copy from last child field table to parent
+
+    // Array store forwarding (pass array stores through struct call parameters)
+    ForwardArrayStore = 0x78,       // u16 fieldId, u16 dstParamIdx — forward field's array store as pending param
+    ForwardParamArrayStore = 0x79,  // u16 srcParamIdx, u16 dstParamIdx — forward received param's store as pending param
+    ArraySearchBeginParam = 0x7A,   // u16 paramIdx, u8 mode — begin search on param-provided array store
 }

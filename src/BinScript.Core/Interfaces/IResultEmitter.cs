@@ -25,4 +25,10 @@ public interface IResultEmitter
     void BeginVariant(string fieldName, string variantName);
     void EndVariant();
     void EmitNull(string fieldName);
+
+    /// <summary>Save the current output state for potential rollback (used by sentinel arrays).</summary>
+    long SaveCheckpoint();
+
+    /// <summary>Roll back output to a previously saved checkpoint (discard sentinel element).</summary>
+    void RollbackToCheckpoint(long checkpoint);
 }

@@ -164,6 +164,20 @@ public sealed class JsonResultEmitter : IResultEmitter, IDisposable
         _writer.WriteNullValue();
     }
 
+    public long SaveCheckpoint()
+    {
+        _writer.Flush();
+        return _stream.Position;
+    }
+
+    public void RollbackToCheckpoint(long checkpoint)
+    {
+        _writer.Flush();
+        _stream.SetLength(checkpoint);
+        _stream.Position = checkpoint;
+        _writer.Reset();
+    }
+
     /// <summary>Get the JSON output as a UTF-8 string.</summary>
     public string GetJson()
     {

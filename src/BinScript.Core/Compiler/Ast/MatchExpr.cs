@@ -9,7 +9,7 @@ public sealed record MatchExpr(
     IReadOnlyList<MatchArm> Arms,
     SourceSpan Span) : Expression(Span);
 
-public sealed record MatchArm(MatchPattern Pattern, Expression? Guard, TypeReference Type, SourceSpan Span) : AstNode(Span);
+public sealed record MatchArm(MatchPattern Pattern, Expression? Guard, TypeReference Type, ArraySpec? Array, SourceSpan Span) : AstNode(Span);
 
 // ── Match patterns ───────────────────────────────────────────────────────────
 

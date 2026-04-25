@@ -16,11 +16,11 @@ public class PeTests
         string source = File.ReadAllText(Path.Combine(StdlibDir, name));
         var compiler = new BinScriptCompiler();
         var result = compiler.Compile(source, name);
-        Assert.True(result.Success, string.Join("; ", result.Diagnostics.Select(d => d.Message)));
+        Assert.True(result.Success, string.Join("\n", result.Diagnostics.Select(d => $"[{d.Severity}] {d.Code} L{d.Span.Line}:{d.Span.Column}: {d.Message}")));
         return new BinScriptProgram(result.Program!);
     }
 
-    [Fact(Skip = "Requires compiler support for @map, @max_depth, parameterized structs, when guards")]
+    [Fact]
     public void Parse_TinyX64_Exe()
     {
         var program = CompileScript("pe.bsx");

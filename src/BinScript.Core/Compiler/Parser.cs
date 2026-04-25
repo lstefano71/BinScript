@@ -989,8 +989,10 @@ public sealed class Parser
 
         Expect(TokenType.Arrow);
         var type = ParseTypeReference();
-        return new MatchArm(pattern, guard, type,
-            SourceSpan.Merge(startSpan, type.Span));
+        var array = ParseArraySpec();
+        var endSpan = array?.Span ?? type.Span;
+        return new MatchArm(pattern, guard, type, array,
+            SourceSpan.Merge(startSpan, endSpan));
     }
 
     private MatchPattern ParseMatchPattern()

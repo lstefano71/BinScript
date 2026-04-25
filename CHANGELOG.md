@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-04-25 22:18
+
+### Added
+- **stdlib/wav.bsx** — WAV/RIFF PCM audio format parser using chunk-based approach with `match` on chunk IDs and parameterized `FmtBody` struct for variable-length fmt chunks.
+- **tests/samples/wav/sine_440hz.wav** — Minimal 8-bit mono 8kHz PCM WAV test fixture (440 Hz sine wave, 0.1s, 844 bytes).
+- **src/BinScript.Tests/Stdlib/WavTests.cs** — Integration tests verifying RIFF header, fmt chunk fields, and data chunk size parsing.
+
 ## 2026-04-25 22:16
 
 ### Added

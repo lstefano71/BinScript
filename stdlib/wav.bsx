@@ -1,0 +1,29 @@
+@default_endian(little)
+
+@coverage(partial)
+
+@root struct WavFile {
+    chunk_id: fixed_string[4] = "RIFF",
+    chunk_size: u32,
+    format: fixed_string[4] = "WAVE",
+    chunks: WavChunk[] @until(@remaining == 0),
+}
+
+struct WavChunk {
+    chunk_id: fixed_string[4],
+    chunk_size: u32,
+    body: match(chunk_id) {
+        "fmt " => FmtBody(chunk_size),
+        _ => bytes[chunk_size],
+    },
+}
+
+struct FmtBody(data_length) {
+    audio_format: u16,
+    num_channels: u16,
+    sample_rate: u32,
+    byte_rate: u32,
+    block_align: u16,
+    bits_per_sample: u16,
+    @hidden _extra: bytes[data_length - 16],
+}

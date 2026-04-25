@@ -12,6 +12,7 @@ public sealed class BytecodeEmitter
     private readonly ScriptFile _ast;
     private readonly TypeResolver _typeEnv;
     private readonly Dictionary<string, object> _parameters;
+    private readonly HashSet<string> _fileParamNames;
 
     // Shared string table across all struct builders.
     private readonly BytecodeBuilder _masterBuilder = new();
@@ -27,6 +28,7 @@ public sealed class BytecodeEmitter
         _ast = ast;
         _typeEnv = typeEnv;
         _parameters = parameters ?? new Dictionary<string, object>();
+        _fileParamNames = new HashSet<string>(ast.Params.Select(p => p.Name));
     }
 
     public BytecodeProgram Emit()
@@ -66,6 +68,7 @@ public sealed class BytecodeEmitter
                 IsRoot = s.IsRoot,
                 IsBitsStruct = false,
                 Coverage = s.Coverage,
+                MaxDepth = s.MaxDepth,
             };
             _structContexts.Add(ctx);
             index++;
@@ -123,12 +126,23 @@ public sealed class BytecodeEmitter
                 ctx.Builder.Emit(Opcode.SeekAbs);
                 break;
             case AtBlock atBlock:
+            {
+                int skipPatch = -1;
+                if (atBlock.Guard is not null)
+                {
+                    EmitExpression(ctx, atBlock.Guard);
+                    ctx.Builder.Emit(Opcode.JumpIfFalse);
+                    skipPatch = ctx.Builder.ReserveI32();
+                }
                 ctx.Builder.Emit(Opcode.SeekPush);
                 EmitExpression(ctx, atBlock.Offset);
                 ctx.Builder.Emit(Opcode.SeekAbs);
                 EmitMembers(ctx, atBlock.Members);
                 ctx.Builder.Emit(Opcode.SeekPop);
+                if (skipPatch >= 0)
+                    ctx.Builder.PatchI32(skipPatch, ctx.Builder.Position);
                 break;
+            }
             case LetBinding let:
                 EmitLetBinding(ctx, let);
                 break;
@@ -193,6 +207,12 @@ public sealed class BytecodeEmitter
                 break;
             case MatchTypeRef matchType:
                 EmitMatchTypeRead(ctx, matchType, fieldId, modifiers);
+                break;
+            case PtrTypeRef ptr:
+                EmitPtrRead(ctx, ptr, fieldId, modifiers);
+                break;
+            case NullableTypeRef nullable:
+                EmitNullableRead(ctx, nullable, fieldId, modifiers);
                 break;
             case BitTypeRef:
                 ctx.Builder.Emit(Opcode.ReadBit);
@@ -360,6 +380,126 @@ public sealed class BytecodeEmitter
             ctx.Builder.Emit(Opcode.ReadBytesDyn);
             ctx.Builder.EmitU16(fieldId);
         }
+    }
+
+    // ─── Pointer reads ───────────────────────────────────────────────
+
+    private void EmitPtrRead(StructEmitContext ctx, PtrTypeRef ptr, ushort fieldId, FieldModifiers modifiers)
+    {
+        // Determine pointer width opcode
+        var widthOpcode = GetPtrWidthOpcode(ptr);
+
+        // Allocate a hidden field to store the raw pointer value
+        ushort ptrFieldId = ctx.AllocateHiddenField($"_ptr_{fieldId}", _masterBuilder);
+
+        // Read the raw pointer value (no JSON emission)
+        ctx.Builder.Emit(widthOpcode);
+        ctx.Builder.EmitU16(ptrFieldId);
+
+        // Compute buffer offset: raw_ptr - base_ptr (for absolute) or raw_ptr + field_offset (for relative)
+        ctx.Builder.Emit(Opcode.PushFieldVal);
+        ctx.Builder.EmitU16(ptrFieldId);
+        if (ptr.IsRelative)
+        {
+            // relptr: offset = field_position + raw_value
+            ctx.Builder.Emit(Opcode.PushConstI64);
+            ctx.Builder.EmitI64(0); // placeholder — we'd need field offset
+            // For now, use runtime field offset
+            ctx.Builder.Emit(Opcode.FnOffsetOf);
+            ctx.Builder.EmitU16(ptrFieldId);
+            ctx.Builder.Emit(Opcode.OpAdd);
+        }
+        else
+        {
+            // absolute ptr: offset = raw_ptr - base_ptr
+            ushort basePtrNameIdx = _masterBuilder.InternString("base_ptr");
+            ctx.Builder.Emit(Opcode.PushFileParam);
+            ctx.Builder.EmitU16(basePtrNameIdx);
+            ctx.Builder.Emit(Opcode.OpSub);
+        }
+
+        // Save position, seek to target, read inner type, restore
+        ctx.Builder.Emit(Opcode.SeekPush);
+        ctx.Builder.Emit(Opcode.SeekAbs);  // pops buffer_offset from eval stack
+        EmitFieldRead(ctx, ptr.InnerType, fieldId, modifiers.Merge(ptr.InnerModifiers));
+        ctx.Builder.Emit(Opcode.SeekPop);
+    }
+
+    private void EmitNullableRead(StructEmitContext ctx, NullableTypeRef nullable, ushort fieldId, FieldModifiers modifiers)
+    {
+        if (nullable.InnerType is PtrTypeRef ptr)
+        {
+            // Nullable pointer: read pointer, check for zero, branch
+            var widthOpcode = GetPtrWidthOpcode(ptr);
+            ushort ptrFieldId = ctx.AllocateHiddenField($"_ptr_{fieldId}", _masterBuilder);
+
+            // Read the raw pointer value
+            ctx.Builder.Emit(widthOpcode);
+            ctx.Builder.EmitU16(ptrFieldId);
+
+            // Check if null (value == 0)
+            ctx.Builder.Emit(Opcode.PushFieldVal);
+            ctx.Builder.EmitU16(ptrFieldId);
+            ctx.Builder.Emit(Opcode.PushConstI64);
+            ctx.Builder.EmitI64(0);
+            ctx.Builder.Emit(Opcode.OpEq);
+            ctx.Builder.Emit(Opcode.JumpIfFalse);
+            int nonNullPatch = ctx.Builder.ReserveI32();
+
+            // Null path: emit JSON null for this field
+            EmitFieldNull(ctx, fieldId);
+            ctx.Builder.Emit(Opcode.Jump);
+            int endPatch = ctx.Builder.ReserveI32();
+
+            // Non-null path: dereference
+            ctx.Builder.PatchI32(nonNullPatch, ctx.Builder.Position);
+            ctx.Builder.Emit(Opcode.PushFieldVal);
+            ctx.Builder.EmitU16(ptrFieldId);
+            if (ptr.IsRelative)
+            {
+                ctx.Builder.Emit(Opcode.FnOffsetOf);
+                ctx.Builder.EmitU16(ptrFieldId);
+                ctx.Builder.Emit(Opcode.OpAdd);
+            }
+            else
+            {
+                ushort basePtrNameIdx = _masterBuilder.InternString("base_ptr");
+                ctx.Builder.Emit(Opcode.PushFileParam);
+                ctx.Builder.EmitU16(basePtrNameIdx);
+                ctx.Builder.Emit(Opcode.OpSub);
+            }
+            ctx.Builder.Emit(Opcode.SeekPush);
+            ctx.Builder.Emit(Opcode.SeekAbs);
+            EmitFieldRead(ctx, ptr.InnerType, fieldId, modifiers.Merge(ptr.InnerModifiers));
+            ctx.Builder.Emit(Opcode.SeekPop);
+
+            // End
+            ctx.Builder.PatchI32(endPatch, ctx.Builder.Position);
+        }
+        else
+        {
+            // Nullable non-pointer: for now, just emit the inner type as-is
+            EmitFieldRead(ctx, nullable.InnerType, fieldId, modifiers);
+        }
+    }
+
+    private static Opcode GetPtrWidthOpcode(PtrTypeRef ptr)
+    {
+        if (ptr.Width is null)
+            return Opcode.ReadPtrU64; // default width
+
+        return ptr.Width.PrimitiveToken switch
+        {
+            TokenType.U32 or TokenType.U32Le => Opcode.ReadPtrU32,
+            TokenType.U64 or TokenType.U64Le => Opcode.ReadPtrU64,
+            _ => Opcode.ReadPtrU64,
+        };
+    }
+
+    private void EmitFieldNull(StructEmitContext ctx, ushort fieldId)
+    {
+        ctx.Builder.Emit(Opcode.EmitNull);
+        ctx.Builder.EmitU16(fieldId);
     }
 
     // ─── Named type reads (struct / enum / bits-struct) ───────────────
@@ -730,6 +870,15 @@ public sealed class BytecodeEmitter
             return;
         }
 
+        // Check file-level @param declarations.
+        if (_fileParamNames.Contains(id.Name))
+        {
+            ushort nameIdx = _masterBuilder.InternString(id.Name);
+            ctx.Builder.Emit(Opcode.PushFileParam);
+            ctx.Builder.EmitU16(nameIdx);
+            return;
+        }
+
         // Check runtime pseudo-variables.
         switch (id.Name)
         {
@@ -1078,6 +1227,7 @@ public sealed class BytecodeEmitter
                 BytecodeLength = code.Length,
                 StaticSize = ComputeStaticSize(ctx),
                 Flags = flags,
+                MaxDepth = ctx.MaxDepth,
             };
 
             offset += code.Length;
@@ -1104,6 +1254,7 @@ public sealed class BytecodeEmitter
         public bool IsBitsStruct { get; init; }
         public bool IsRoot { get; init; }
         public CoverageMode? Coverage { get; init; }
+        public int? MaxDepth { get; init; }
 
         public StructDecl? Decl { get; init; }
         public BitsStructDecl? BitsDecl { get; init; }
@@ -1131,6 +1282,19 @@ public sealed class BytecodeEmitter
             });
 
             return id;
+        }
+
+        public ushort AllocateHiddenField(string name, BytecodeBuilder masterBuilder)
+        {
+            return AllocateField(name, new FieldModifiers { IsHidden = true }, masterBuilder);
+        }
+
+        public string GetFieldName(ushort fieldId)
+        {
+            foreach (var kv in FieldIndices)
+                if (kv.Value == fieldId)
+                    return kv.Key;
+            return $"field_{fieldId}";
         }
     }
 }

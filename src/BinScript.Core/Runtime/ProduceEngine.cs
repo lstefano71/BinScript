@@ -216,6 +216,12 @@ public sealed class ProduceEngine
                 case Opcode.PushParam:
                 { ushort pi = ReadU16(bytecode, ref ip); var p = ctx.CurrentParams;
                   ctx.Push(pi < p.Length ? p[pi] : StackValue.Zero); break; }
+                case Opcode.PushFileParam:
+                { ushort ni = ReadU16(bytecode, ref ip); string nm = program.GetString(ni);
+                  if (options.RuntimeParameters != null && options.RuntimeParameters.TryGetValue(nm, out long fpv))
+                      ctx.Push(StackValue.FromInt(fpv));
+                  else throw new ProduceException($"Runtime parameter '{nm}' not provided.");
+                  break; }
                 case Opcode.PushRuntimeVar: { byte vi = bytecode[ip++]; ctx.Push(StackValue.FromInt(vi == 1 ? ctx.Offset : 0)); break; }
                 case Opcode.PushIndex: ctx.Push(StackValue.FromInt(ctx.CurrentArrayIndex)); break;
                 case Opcode.StoreFieldVal: { ushort fid = ReadU16(bytecode, ref ip); fieldTable.SetValue(fid, ctx.Pop()); break; }
@@ -535,6 +541,12 @@ public sealed class ProduceEngine
                 case Opcode.PushParam:
                 { ushort pi = ReadU16(bytecode, ref ip); var p = ctx.CurrentParams;
                   ctx.Push(pi < p.Length ? p[pi] : StackValue.Zero); break; }
+                case Opcode.PushFileParam:
+                { ushort ni = ReadU16(bytecode, ref ip); string nm = program.GetString(ni);
+                  if (options.RuntimeParameters != null && options.RuntimeParameters.TryGetValue(nm, out long fpv))
+                      ctx.Push(StackValue.FromInt(fpv));
+                  else throw new ProduceException($"Runtime parameter '{nm}' not provided.");
+                  break; }
                 case Opcode.PushRuntimeVar: { byte vi = bytecode[ip++]; ctx.Push(StackValue.FromInt(vi == 1 ? ctx.Offset : 0)); break; }
                 case Opcode.PushIndex: ctx.Push(StackValue.FromInt(ctx.CurrentArrayIndex)); break;
                 case Opcode.StoreFieldVal: { ushort fid = ReadU16(bytecode, ref ip); fieldTable.SetValue(fid, ctx.Pop()); break; }
@@ -644,6 +656,7 @@ public sealed class ProduceEngine
             Opcode.ReadF64Le or Opcode.ReadF64Be or Opcode.ReadBool => 2,
             Opcode.ReadFixedStr => 5, Opcode.ReadCString => 3, Opcode.ReadBytesFixed => 6,
             Opcode.SkipFixed => 2,
+            Opcode.ReadPtrU32 or Opcode.ReadPtrU64 or Opcode.EmitNull => 2,
             Opcode.AssertValue => ComputeAssertValueSize(bytecode, ip),
             Opcode.CallStruct => 3, Opcode.Return => 0,
             Opcode.Jump or Opcode.JumpIfFalse or Opcode.JumpIfTrue => 4,
@@ -652,7 +665,7 @@ public sealed class ProduceEngine
             Opcode.EmitStructEnd or Opcode.EmitArrayEnd or Opcode.EmitVariantEnd or Opcode.EmitBitsEnd => 0,
             Opcode.ReadBytesDyn => 2, Opcode.ReadStringDyn => 3, Opcode.ReadBits => 3, Opcode.ReadBit => 2,
             Opcode.PushConstI64 or Opcode.PushConstF64 => 8,
-            Opcode.PushConstStr or Opcode.PushFieldVal or Opcode.PushParam or Opcode.StoreFieldVal => 2,
+            Opcode.PushConstStr or Opcode.PushFieldVal or Opcode.PushParam or Opcode.StoreFieldVal or Opcode.PushFileParam => 2,
             Opcode.PushRuntimeVar => 1, Opcode.PushIndex => 0,
             >= Opcode.OpAdd and <= Opcode.OpNeg => 0,
             Opcode.FnSizeOf or Opcode.FnOffsetOf or Opcode.FnCount or Opcode.FnStrLen => 2,

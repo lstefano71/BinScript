@@ -53,3 +53,18 @@ public sealed record MethodCallExpr(
     string MethodName,
     IReadOnlyList<Expression> Args,
     SourceSpan Span) : Expression(Span);
+
+/// <summary>Lambda expression: <c>s =&gt; predicate</c>.</summary>
+public sealed record LambdaExpr(string Parameter, Expression Body, SourceSpan Span) : Expression(Span);
+
+/// <summary>Null literal: <c>null</c>.</summary>
+public sealed record NullLiteralExpr(SourceSpan Span) : Expression(Span);
+
+/// <summary>A let-binding inside a block expression.</summary>
+public sealed record MapLetBinding(string Name, Expression Value, SourceSpan Span) : AstNode(Span);
+
+/// <summary>Block expression: <c>{ @let x = expr, ..., result_expr }</c>.</summary>
+public sealed record BlockExpr(
+    IReadOnlyList<MapLetBinding> Bindings,
+    Expression Result,
+    SourceSpan Span) : Expression(Span);

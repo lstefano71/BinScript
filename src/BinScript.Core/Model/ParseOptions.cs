@@ -10,4 +10,7 @@ public sealed record ParseOptions
 
     /// <summary>Maximum number of array elements before aborting.</summary>
     public int MaxArrayElements { get; init; } = 10_000_000;
+
+    /// <summary>Runtime values for file-level @param declarations.</summary>
+    public Dictionary<string, long>? RuntimeParameters { get; init; }
 }

@@ -24,4 +24,5 @@ public interface IResultEmitter
     void EmitBits(string fieldName, ulong value, int bitCount);
     void BeginVariant(string fieldName, string variantName);
     void EndVariant();
+    void EmitNull(string fieldName);
 }

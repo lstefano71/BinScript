@@ -1,5 +1,6 @@
 namespace BinScript.Tests.Runtime;
 
+using System.Buffers.Binary;
 using System.Text.Json;
 using BinScript.Core.Api;
 using BinScript.Core.Bytecode;
@@ -25,6 +26,15 @@ public class ParseEngineTests
         using var emitter = new JsonResultEmitter();
         var engine = new ParseEngine();
         var result = engine.Parse(program, data, emitter);
+        Assert.True(result.Success, FormatDiags(result.Diagnostics));
+        return emitter.GetJson();
+    }
+
+    private static string ParseToJson(BytecodeProgram program, byte[] data, ParseOptions options)
+    {
+        using var emitter = new JsonResultEmitter();
+        var engine = new ParseEngine();
+        var result = engine.Parse(program, data, emitter, options);
         Assert.True(result.Success, FormatDiags(result.Diagnostics));
         return emitter.GetJson();
     }
@@ -1004,5 +1014,257 @@ public class ParseEngineTests
         using var doc = JsonDocument.Parse(json);
         Assert.Equal(0x42,
             doc.RootElement.GetProperty("b").GetProperty("c").GetProperty("val").GetInt64());
+    }
+
+    // ─── @at when guards ──────────────────────────────────────────────
+
+    [Fact]
+    public void AtBlock_WhenGuard_True_ReadsBlock()
+    {
+        var program = Compile("""
+            @default_endian(little)
+            @root struct Test {
+                offset: u32,
+                @at(offset) when offset != 0 {
+                    value: u8,
+                },
+            }
+            """);
+
+        // offset=8 (LE: 08 00 00 00), then 4 padding bytes, then value=0xAB at position 8
+        byte[] data = [0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xAB];
+        var json = ParseToJson(program, data);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal(8, doc.RootElement.GetProperty("offset").GetInt64());
+        Assert.Equal(0xAB, doc.RootElement.GetProperty("value").GetInt64());
+    }
+
+    [Fact]
+    public void AtBlock_WhenGuard_False_SkipsBlock()
+    {
+        var program = Compile("""
+            @default_endian(little)
+            @root struct Test {
+                offset: u32,
+                @at(offset) when offset != 0 {
+                    value: u8,
+                },
+            }
+            """);
+
+        // offset=0 → guard is false, so @at block is skipped
+        byte[] data = [0x00, 0x00, 0x00, 0x00, 0xAB];
+        var json = ParseToJson(program, data);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal(0, doc.RootElement.GetProperty("offset").GetInt64());
+        // 'value' should NOT be present
+        Assert.False(doc.RootElement.TryGetProperty("value", out _));
+    }
+
+    // ─── @max_depth per-struct ────────────────────────────────────────
+
+    [Fact]
+    public void MaxDepth_LimitsRecursion()
+    {
+        // Struct A calls B which is non-recursive; A has @max_depth(2)
+        // We test that a non-recursive struct with @max_depth compiles and runs fine
+        var program = Compile("""
+            @default_endian(little)
+            struct Inner @max_depth(3) { x: u8 }
+            @root struct Outer { inner: Inner }
+            """);
+
+        byte[] data = [0x42];
+        var json = ParseToJson(program, data);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal(0x42, doc.RootElement.GetProperty("inner").GetProperty("x").GetInt64());
+    }
+
+    [Fact]
+    public void MaxDepth_ExceedsLimit_Throws()
+    {
+        // Node has @max_depth(2) and self-references via @at block.
+        // Data encodes: offset1=4, val=0xAA, then at offset 4: offset2=8, val=0xBB,
+        // then at offset 8: offset3=12, val=0xCC → third entry into Node exceeds limit.
+        var program = Compile("""
+            @default_endian(little)
+            @root struct Node @max_depth(2) {
+                next_offset: u32,
+                value: u8,
+                @at(next_offset) when next_offset != 0 {
+                    next: Node,
+                },
+            }
+            """);
+
+        byte[] data = new byte[20];
+        // Node at 0: next_offset=5, value=0xAA
+        data[0] = 5; data[1] = 0; data[2] = 0; data[3] = 0; data[4] = 0xAA;
+        // Node at 5: next_offset=10, value=0xBB
+        data[5] = 10; data[6] = 0; data[7] = 0; data[8] = 0; data[9] = 0xBB;
+        // Node at 10: next_offset=15, value=0xCC (this would be depth 3 → exceeds limit)
+        data[10] = 15; data[11] = 0; data[12] = 0; data[13] = 0; data[14] = 0xCC;
+        data[15] = 0; data[16] = 0; data[17] = 0; data[18] = 0; data[19] = 0xDD;
+
+        using var emitter = new JsonResultEmitter();
+        var engine = new ParseEngine();
+        var result = engine.Parse(program, data, emitter);
+        Assert.False(result.Success);
+        Assert.Contains("Max depth", result.Diagnostics[0].Message);
+    }
+
+    // ─── File-level @param ────────────────────────────────────────────
+
+    [Fact]
+    public void FileParam_UsedInExpression()
+    {
+        // Use base_ptr in an @at block expression
+        var program = Compile("""
+            @default_endian(little)
+            @param base_ptr: u64
+            @root struct Test {
+                raw_offset: u32,
+                @at(raw_offset + base_ptr) {
+                    value: u8,
+                },
+            }
+            """);
+
+        // raw_offset = 4 (points to byte at offset 4 + base_ptr)
+        // With base_ptr = 0, effectively @at(4)
+        byte[] data = [0x04, 0x00, 0x00, 0x00, 0xAB];
+        var options = new ParseOptions
+        {
+            RuntimeParameters = new() { ["base_ptr"] = 0 }
+        };
+        var json = ParseToJson(program, data, options);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal(4, doc.RootElement.GetProperty("raw_offset").GetInt64());
+        Assert.Equal(0xAB, doc.RootElement.GetProperty("value").GetInt64());
+    }
+
+    [Fact]
+    public void FileParam_MissingValue_ReturnsError()
+    {
+        var program = Compile("""
+            @default_endian(little)
+            @param base_ptr: u64
+            @root struct Test {
+                raw_offset: u32,
+                @at(raw_offset + base_ptr) {
+                    value: u8,
+                },
+            }
+            """);
+
+        byte[] data = [0x04, 0x00, 0x00, 0x00, 0xAB];
+        using var emitter = new JsonResultEmitter();
+        var engine = new ParseEngine();
+        var result = engine.Parse(program, data, emitter);
+        Assert.False(result.Success);
+        Assert.Contains("base_ptr", result.Diagnostics[0].Message);
+    }
+
+    // ─── ptr<T, width> transparent dereferencing ──────────────────────
+
+    [Fact]
+    public void PtrCString_TransparentDeref()
+    {
+        // Buffer: [ptr_value: 8 bytes][hello\0]
+        // ptr_value = base_ptr + 8 (the string starts at offset 8 in the buffer)
+        // With base_ptr = 0x0000, ptr_value = 8
+        var program = Compile("""
+            @default_endian(little)
+            @param base_ptr: u64
+            @root struct Test {
+                name: ptr<cstring, u64>,
+            }
+            """);
+
+        byte[] data = new byte[14]; // 8 bytes ptr + "hello\0"
+        // ptr_value = 8 (offset 8 in buffer, base_ptr=0 so raw ptr = 0+8 = 8)
+        BinaryPrimitives.WriteUInt64LittleEndian(data.AsSpan(0), 8);
+        // "hello\0" at offset 8
+        data[8] = (byte)'h'; data[9] = (byte)'e'; data[10] = (byte)'l';
+        data[11] = (byte)'l'; data[12] = (byte)'o'; data[13] = 0;
+
+        var options = new ParseOptions
+        {
+            RuntimeParameters = new() { ["base_ptr"] = 0 }
+        };
+        var json = ParseToJson(program, data, options);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal("hello", doc.RootElement.GetProperty("name").GetString());
+    }
+
+    [Fact]
+    public void PtrCString_WithBasePtr()
+    {
+        // Same layout but base_ptr = 0x1000
+        // ptr_value = 0x1000 + 8 = 0x1008
+        var program = Compile("""
+            @default_endian(little)
+            @param base_ptr: u64
+            @root struct Test {
+                name: ptr<cstring, u64>,
+            }
+            """);
+
+        byte[] data = new byte[14];
+        BinaryPrimitives.WriteUInt64LittleEndian(data.AsSpan(0), 0x1008);
+        data[8] = (byte)'h'; data[9] = (byte)'i'; data[10] = 0;
+
+        var options = new ParseOptions
+        {
+            RuntimeParameters = new() { ["base_ptr"] = 0x1000 }
+        };
+        var json = ParseToJson(program, data, options);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal("hi", doc.RootElement.GetProperty("name").GetString());
+    }
+
+    [Fact]
+    public void NullablePtr_NullValue_EmitsJsonNull()
+    {
+        var program = Compile("""
+            @default_endian(little)
+            @param base_ptr: u64
+            @root struct Test {
+                name: ptr<cstring, u64>?,
+            }
+            """);
+
+        byte[] data = new byte[8]; // all zeros → null pointer
+        var options = new ParseOptions
+        {
+            RuntimeParameters = new() { ["base_ptr"] = 0 }
+        };
+        var json = ParseToJson(program, data, options);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal(JsonValueKind.Null, doc.RootElement.GetProperty("name").ValueKind);
+    }
+
+    [Fact]
+    public void NullablePtr_NonNull_Dereferences()
+    {
+        var program = Compile("""
+            @default_endian(little)
+            @param base_ptr: u64
+            @root struct Test {
+                name: ptr<cstring, u64>?,
+            }
+            """);
+
+        byte[] data = new byte[14];
+        BinaryPrimitives.WriteUInt64LittleEndian(data.AsSpan(0), 8);
+        data[8] = (byte)'o'; data[9] = (byte)'k'; data[10] = 0;
+
+        var options = new ParseOptions
+        {
+            RuntimeParameters = new() { ["base_ptr"] = 0 }
+        };
+        var json = ParseToJson(program, data, options);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal("ok", doc.RootElement.GetProperty("name").GetString());
     }
 }

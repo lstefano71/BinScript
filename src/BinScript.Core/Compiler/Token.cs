@@ -50,6 +50,9 @@ public enum TokenType
     String,
     FixedString,
     Bool,
+    Ptr,
+    RelPtr,
+    NullLiteral,
 
     // ── Directives (@xxx) ────────────────────────────────────
     Root,
@@ -79,6 +82,10 @@ public enum TokenType
     StrLen,
     Crc32,
     Adler32,
+    Map,
+    MaxDepth,
+    Inline,
+    ShowPtr,
 
     // ── Primitive type keywords ──────────────────────────────
     U8, U16, U32, U64,
@@ -108,6 +115,7 @@ public enum TokenType
     Dot,            // .
     Arrow,          // =>
     DotDot,         // ..
+    QuestionMark,   // ?
 
     // ── Operators ────────────────────────────────────────────
     Plus,               // +
@@ -159,6 +167,9 @@ public static class TokenTypeInfo
         ["string"] = TokenType.String,
         ["fixed_string"] = TokenType.FixedString,
         ["bool"] = TokenType.Bool,
+        ["ptr"] = TokenType.Ptr,
+        ["relptr"] = TokenType.RelPtr,
+        ["null"] = TokenType.NullLiteral,
         ["true"] = TokenType.TrueLiteral,
         ["false"] = TokenType.FalseLiteral,
 
@@ -223,6 +234,10 @@ public static class TokenTypeInfo
         ["strlen"] = TokenType.StrLen,
         ["crc32"] = TokenType.Crc32,
         ["adler32"] = TokenType.Adler32,
+        ["map"] = TokenType.Map,
+        ["max_depth"] = TokenType.MaxDepth,
+        ["inline"] = TokenType.Inline,
+        ["show_ptr"] = TokenType.ShowPtr,
     }.ToFrozenDictionary();
 
     private static readonly FrozenSet<TokenType> s_primitiveTypes =

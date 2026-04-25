@@ -418,7 +418,7 @@ struct ImportLookupEntry32(sections) {
 
 struct ImportLookupEntry64(sections) {
     value: u64,
-    @at(rva_to_offset((value & 0x7FFFFFFF) as u32, sections))
+    @at(rva_to_offset(value & 0x7FFFFFFF, sections))
         when value & 0x8000000000000000 == 0
             && value != 0 {
         hint: u16,

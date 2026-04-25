@@ -33,6 +33,9 @@ public sealed class ParseContext
     // Struct call depth tracking
     public int Depth { get; set; }
 
+    // Per-struct depth counters for @max_depth enforcement
+    private readonly Dictionary<int, int> _structDepth = new();
+
     // Current struct index being executed
     public int CurrentStructIndex { get; set; } = -1;
 
@@ -78,4 +81,24 @@ public sealed class ParseContext
     public void PushParams(StackValue[] parameters) => _paramStack.Push(parameters);
     public StackValue[] PopParams() => _paramStack.Pop();
     public StackValue[] CurrentParams => _paramStack.Count > 0 ? _paramStack.Peek() : [];
+
+    // Per-struct depth tracking for @max_depth
+    public int GetStructDepth(int structIndex)
+    {
+        return _structDepth.TryGetValue(structIndex, out int d) ? d : 0;
+    }
+
+    public void IncrementStructDepth(int structIndex)
+    {
+        _structDepth[structIndex] = GetStructDepth(structIndex) + 1;
+    }
+
+    public void DecrementStructDepth(int structIndex)
+    {
+        int d = GetStructDepth(structIndex);
+        if (d > 1)
+            _structDepth[structIndex] = d - 1;
+        else
+            _structDepth.Remove(structIndex);
+    }
 }

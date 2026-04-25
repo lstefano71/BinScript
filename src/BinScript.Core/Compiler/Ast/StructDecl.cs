@@ -14,4 +14,5 @@ public sealed record StructDecl(
     IReadOnlyList<MemberDecl> Members,
     bool IsRoot,
     CoverageMode? Coverage,
+    int? MaxDepth,
     SourceSpan Span) : AstNode(Span);

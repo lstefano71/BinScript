@@ -362,6 +362,7 @@ public sealed class Lexer
             '^' => TokenType.Caret,
             '~' => TokenType.Tilde,
             '!' => TokenType.Bang,
+            '?' => TokenType.QuestionMark,
             '=' => TokenType.Equal,
             '<' => TokenType.Less,
             '>' => TokenType.Greater,

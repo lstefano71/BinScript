@@ -158,6 +158,12 @@ public sealed class JsonResultEmitter : IResultEmitter, IDisposable
         _containerStack.Pop();
     }
 
+    public void EmitNull(string fieldName)
+    {
+        WritePropertyNameIfNeeded(fieldName);
+        _writer.WriteNullValue();
+    }
+
     /// <summary>Get the JSON output as a UTF-8 string.</summary>
     public string GetJson()
     {

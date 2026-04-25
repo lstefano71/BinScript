@@ -66,6 +66,7 @@ public enum Opcode : byte
     PushRuntimeVar = 0x85,
     PushIndex = 0x86,
     StoreFieldVal = 0x87,
+    PushFileParam = 0x88,
 
     // Arithmetic/logic
     OpAdd = 0x90,
@@ -122,4 +123,9 @@ public enum Opcode : byte
     // Alignment
     Align = 0xF0,
     AlignFixed = 0xF1,
+
+    // Pointer operations
+    ReadPtrU32 = 0x74,
+    ReadPtrU64 = 0x75,
+    EmitNull = 0x76,
 }

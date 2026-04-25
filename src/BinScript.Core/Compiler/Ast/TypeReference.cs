@@ -35,3 +35,17 @@ public sealed record BitsTypeRef(int Count, SourceSpan Span) : TypeReference(Spa
 /// so it can appear in type position.
 /// </summary>
 public sealed record MatchTypeRef(MatchExpr Match, SourceSpan Span) : TypeReference(Span);
+
+/// <summary>Pointer type: <c>ptr&lt;T, u64&gt;</c> or <c>relptr&lt;T, u32&gt;</c>.</summary>
+public sealed record PtrTypeRef(
+    TypeReference InnerType,
+    PrimitiveTypeRef? Width,
+    bool IsRelative,
+    FieldModifiers? InnerModifiers,
+    SourceSpan Span) : TypeReference(Span);
+
+/// <summary>Nullable wrapper: <c>T?</c>.</summary>
+public sealed record NullableTypeRef(TypeReference InnerType, SourceSpan Span) : TypeReference(Span);
+
+/// <summary>Array type in annotation position: <c>SectionHeader[]</c> or <c>u32[count]</c>. Used in <c>@map</c> params and <c>ptr</c> inner types.</summary>
+public sealed record ArrayTypeRef(TypeReference ElementType, Expression? Count, SourceSpan Span) : TypeReference(Span);

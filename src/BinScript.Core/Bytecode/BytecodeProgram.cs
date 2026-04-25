@@ -28,6 +28,8 @@ public sealed class StructMeta
     public required int BytecodeLength { get; init; }
     public required int StaticSize { get; init; } // -1 if dynamic
     public required StructFlags Flags { get; init; }
+    /// <summary>Per-struct max recursion depth. Null = use global default (256).</summary>
+    public int? MaxDepth { get; init; }
 }
 
 [Flags]

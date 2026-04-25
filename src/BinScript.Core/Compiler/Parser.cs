@@ -34,6 +34,7 @@ public sealed class Parser
         var bitsStructs = new List<BitsStructDecl>();
         var enums = new List<EnumDecl>();
         var constants = new List<ConstDecl>();
+        var maps = new List<MapDecl>();
 
         var startSpan = Current().Span;
         bool isRoot = false;
@@ -86,6 +87,10 @@ public sealed class Parser
                         constants.Add(ParseConst());
                         break;
 
+                    case TokenType.Map:
+                        maps.Add(ParseMapDecl());
+                        break;
+
                     default:
                         Error($"Unexpected token '{Current().Text}' at top level");
                         SkipToNextTopLevel();
@@ -104,7 +109,7 @@ public sealed class Parser
         var endSpan = Current().Span;
         var file = new ScriptFile(
             _filePath, defaultEndian, defaultEncoding,
-            imports, parameters, structs, bitsStructs, enums, constants,
+            imports, parameters, structs, bitsStructs, enums, constants, maps,
             SourceSpan.Merge(startSpan, endSpan));
 
         return (file, _diagnostics);
@@ -174,7 +179,8 @@ public sealed class Parser
                 or TokenType.Enum or TokenType.Const
                 or TokenType.Import or TokenType.Param
                 or TokenType.Root or TokenType.Coverage
-                or TokenType.DefaultEndian or TokenType.DefaultEncoding)
+                or TokenType.DefaultEndian or TokenType.DefaultEncoding
+                or TokenType.Map)
                 return;
 
             Advance();
@@ -249,6 +255,38 @@ public sealed class Parser
         return new ConstDecl(name.Text, value, SourceSpan.Merge(start.Span, end.Span));
     }
 
+    /// <summary>Parses <c>@map name(param: type, ...): return_type = expression</c>.</summary>
+    private MapDecl ParseMapDecl()
+    {
+        var start = Advance(); // @map
+        var name = Expect(TokenType.Identifier);
+        Expect(TokenType.LeftParen);
+
+        var mapParams = new List<MapParam>();
+        if (Current().Type != TokenType.RightParen)
+        {
+            do
+            {
+                var pStart = Current();
+                var pName = Expect(TokenType.Identifier);
+                Expect(TokenType.Colon);
+                var pType = ParseAnnotationTypeReference();
+                mapParams.Add(new MapParam(pName.Text, pType,
+                    SourceSpan.Merge(pName.Span, pType.Span)));
+            }
+            while (Match(TokenType.Comma));
+        }
+        Expect(TokenType.RightParen);
+
+        Expect(TokenType.Colon);
+        var returnType = ParseAnnotationTypeReference();
+        Expect(TokenType.Equal);
+        var body = ParseExpression();
+
+        return new MapDecl(name.Text, mapParams, returnType, body,
+            SourceSpan.Merge(start.Span, body.Span));
+    }
+
     // ════════════════════════════════════════════════════════════════
     //  Struct
     // ════════════════════════════════════════════════════════════════
@@ -269,12 +307,23 @@ public sealed class Parser
             Expect(TokenType.RightParen);
         }
 
+        // Optional @max_depth(N) after name/params, before '{'
+        int? maxDepth = null;
+        if (Current().Type == TokenType.MaxDepth)
+        {
+            Advance(); // @max_depth
+            Expect(TokenType.LeftParen);
+            var depthTok = Expect(TokenType.IntLiteral);
+            Expect(TokenType.RightParen);
+            maxDepth = (int)ParseLongText(depthTok.Text);
+        }
+
         Expect(TokenType.LeftBrace);
         var members = ParseMembers();
         var end = Expect(TokenType.RightBrace);
 
         return new StructDecl(
-            name.Text, parameters, members, isRoot, coverage,
+            name.Text, parameters, members, isRoot, coverage, maxDepth,
             SourceSpan.Merge(start.Span, end.Span));
     }
 
@@ -319,10 +368,19 @@ public sealed class Parser
         Expect(TokenType.LeftParen);
         var expr = ParseExpression();
         Expect(TokenType.RightParen);
+
+        // Optional 'when' guard (spec §4.1)
+        Expression? guard = null;
+        if (Current().Type == TokenType.When)
+        {
+            Advance(); // when
+            guard = ParseExpression();
+        }
+
         Expect(TokenType.LeftBrace);
         var members = ParseMembers();
         var end = Expect(TokenType.RightBrace);
-        return new AtBlock(expr, members, SourceSpan.Merge(start.Span, end.Span));
+        return new AtBlock(expr, guard, members, SourceSpan.Merge(start.Span, end.Span));
     }
 
     private LetBinding ParseLet()
@@ -444,6 +502,16 @@ public sealed class Parser
                     };
                     break;
 
+                case TokenType.Inline:
+                    Advance();
+                    current = current with { IsInline = true };
+                    break;
+
+                case TokenType.ShowPtr:
+                    Advance();
+                    current = current with { ShowPtr = true };
+                    break;
+
                 default:
                     return current;
             }
@@ -508,10 +576,30 @@ public sealed class Parser
 
     private TypeReference ParseTypeReference()
     {
+        var type = ParseBaseTypeReference();
+
+        // Nullable suffix: T?
+        if (Current().Type == TokenType.QuestionMark)
+        {
+            var q = Advance();
+            type = new NullableTypeRef(type, SourceSpan.Merge(type.Span, q.Span));
+        }
+
+        return type;
+    }
+
+    private TypeReference ParseBaseTypeReference()
+    {
         var tok = Current();
 
         switch (tok.Type)
         {
+            // ── pointer types (spec §3.4) ──
+
+            case TokenType.Ptr:
+            case TokenType.RelPtr:
+                return ParsePtrType();
+
             // ── special compound types ──
 
             case TokenType.CString:
@@ -603,9 +691,53 @@ public sealed class Parser
         }
     }
 
-    // ════════════════════════════════════════════════════════════════
-    //  Expressions — precedence climbing
-    // ════════════════════════════════════════════════════════════════
+    /// <summary>Parses <c>ptr&lt;T, width&gt;</c> or <c>relptr&lt;T, width&gt;</c>.</summary>
+    private PtrTypeRef ParsePtrType()
+    {
+        var start = Advance(); // ptr or relptr
+        bool isRelative = start.Type == TokenType.RelPtr;
+
+        Expect(TokenType.Less); // <
+
+        var innerType = ParseBaseTypeReference();
+
+        // Optional inner field modifiers (e.g., @encoding(utf16le))
+        FieldModifiers? innerMods = null;
+        if (Current().Type is TokenType.Encoding or TokenType.Hidden)
+            innerMods = ParseFieldModifiers(new FieldModifiers());
+
+        // Optional width type after comma; defaults to u64 if omitted
+        PrimitiveTypeRef? width = null;
+        if (Match(TokenType.Comma))
+        {
+            var widthTok = Current();
+            if (!TokenTypeInfo.IsPrimitiveType(widthTok.Type))
+                throw Error($"Expected primitive type for pointer width but found {widthTok.Type}");
+            Advance();
+            width = new PrimitiveTypeRef(widthTok.Type, widthTok.Span);
+        }
+
+        var end = Expect(TokenType.Greater); // >
+
+        return new PtrTypeRef(innerType, width, isRelative, innerMods,
+            SourceSpan.Merge(start.Span, end.Span));
+    }
+
+    /// <summary>Parses a type reference with optional <c>[]</c> array suffix, used in <c>@map</c> parameter types.</summary>
+    private TypeReference ParseAnnotationTypeReference()
+    {
+        var type = ParseTypeReference();
+
+        // Array suffix: SectionHeader[]
+        if (Current().Type == TokenType.LeftBracket && Peek().Type == TokenType.RightBracket)
+        {
+            var start = Advance(); // [
+            var end = Advance(); // ]
+            type = new ArrayTypeRef(type, null, SourceSpan.Merge(type.Span, end.Span));
+        }
+
+        return type;
+    }
 
     private Expression ParseExpression(int minPrec = 0)
     {
@@ -712,15 +844,42 @@ public sealed class Parser
                 Advance();
                 return new BoolLiteralExpr(false, tok.Span);
 
-            case TokenType.Identifier:
+            case TokenType.NullLiteral:
                 Advance();
+                return new NullLiteralExpr(tok.Span);
+
+            case TokenType.Identifier:
+            {
+                Advance();
+                // Lambda: ident => expr
+                if (Current().Type == TokenType.Arrow)
+                {
+                    Advance(); // =>
+                    var body = ParseExpression();
+                    return new LambdaExpr(tok.Text, body,
+                        SourceSpan.Merge(tok.Span, body.Span));
+                }
+                // Generic call: ident(args) — for @map invocations
+                if (Current().Type == TokenType.LeftParen)
+                {
+                    Advance(); // (
+                    var args = ParseArgList();
+                    var end = Expect(TokenType.RightParen);
+                    return new FunctionCallExpr(tok.Text, args,
+                        SourceSpan.Merge(tok.Span, end.Span));
+                }
                 return new IdentifierExpr(tok.Text, tok.Span);
+            }
 
             case TokenType.LeftParen:
                 Advance();
                 var inner = ParseExpression();
                 Expect(TokenType.RightParen);
                 return inner;
+
+            // Block expression: { @let bindings, result_expr }
+            case TokenType.LeftBrace:
+                return ParseBlockExpr();
 
             // ── directives used as zero-arg built-in functions ──
             case TokenType.Remaining:
@@ -759,6 +918,30 @@ public sealed class Parser
         var args = ParseArgList();
         var end = Expect(TokenType.RightParen);
         return new FunctionCallExpr(name, args, SourceSpan.Merge(tok.Span, end.Span));
+    }
+
+    /// <summary>Parses a block expression: <c>{ @let x = e, ..., result }</c>.</summary>
+    private BlockExpr ParseBlockExpr()
+    {
+        var start = Advance(); // {
+        var bindings = new List<MapLetBinding>();
+
+        while (Current().Type == TokenType.Let)
+        {
+            var letTok = Advance(); // @let
+            var name = Expect(TokenType.Identifier);
+            Expect(TokenType.Equal);
+            var val = ParseExpression();
+            var binding = new MapLetBinding(name.Text, val,
+                SourceSpan.Merge(letTok.Span, val.Span));
+            bindings.Add(binding);
+            Expect(TokenType.Comma);
+        }
+
+        var result = ParseExpression();
+        var end = Expect(TokenType.RightBrace);
+        return new BlockExpr(bindings, result,
+            SourceSpan.Merge(start.Span, end.Span));
     }
 
     private List<Expression> ParseArgList()

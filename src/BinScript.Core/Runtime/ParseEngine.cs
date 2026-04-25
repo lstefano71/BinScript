@@ -82,8 +82,14 @@ public sealed class ParseEngine
         if (ctx.Depth >= options.MaxDepth)
             throw new ParseException($"Max nesting depth {options.MaxDepth} exceeded.");
 
-        ctx.Depth++;
         var structMeta = program.Structs[structIndex];
+
+        // Per-struct @max_depth enforcement
+        if (structMeta.MaxDepth is int limit && ctx.GetStructDepth(structIndex) >= limit)
+            throw new ParseException($"Max depth {limit} exceeded for struct '{program.GetString(structMeta.NameIndex)}'.");
+
+        ctx.Depth++;
+        ctx.IncrementStructDepth(structIndex);
         var fieldTable = new FieldValueTable(structMeta.Fields.Length + 16);
         ctx.PushFieldTable(fieldTable);
         ctx.PushParams(parameters);
@@ -392,6 +398,33 @@ public sealed class ParseEngine
                     ctx.Position += len;
                     break;
                 }
+
+                // ─── Pointer Reads (no JSON emission) ─────────────
+                case Opcode.ReadPtrU32:
+                {
+                    ushort fid = ReadU16(bytecode, ref ip);
+                    long offset = ctx.Position;
+                    uint val = BinaryPrimitives.ReadUInt32LittleEndian(inputSpan(ctx, 4));
+                    ctx.Position += 4;
+                    fieldTable.SetValue(fid, StackValue.FromInt(val));
+                    fieldTable.SetOffset(fid, offset);
+                    fieldTable.SetSize(fid, 4);
+                    ctx.Push(StackValue.FromInt(val));
+                    break;
+                }
+                case Opcode.ReadPtrU64:
+                {
+                    ushort fid = ReadU16(bytecode, ref ip);
+                    long offset = ctx.Position;
+                    ulong val = BinaryPrimitives.ReadUInt64LittleEndian(inputSpan(ctx, 8));
+                    ctx.Position += 8;
+                    fieldTable.SetValue(fid, StackValue.FromInt((long)val));
+                    fieldTable.SetOffset(fid, offset);
+                    fieldTable.SetSize(fid, 8);
+                    ctx.Push(StackValue.FromInt((long)val));
+                    break;
+                }
+
                 case Opcode.AssertValue:
                 {
                     ushort fid = ReadU16(bytecode, ref ip);
@@ -547,6 +580,13 @@ public sealed class ParseEngine
                     ctx.BitPosition = 0;
                     inBits = false;
                     break;
+                case Opcode.EmitNull:
+                {
+                    ushort fid = ReadU16(bytecode, ref ip);
+                    string fname = GetFieldName(program, structMeta, fid);
+                    emitter.EmitNull(fname);
+                    break;
+                }
 
                 // ─── Dynamic Reads ─────────────────────────────────
                 case Opcode.ReadBytesDyn:
@@ -641,6 +681,16 @@ public sealed class ParseEngine
                         _ => 0,
                     };
                     ctx.Push(StackValue.FromInt(val));
+                    break;
+                }
+                case Opcode.PushFileParam:
+                {
+                    ushort nameIdx = ReadU16(bytecode, ref ip);
+                    string name = program.GetString(nameIdx);
+                    if (options.RuntimeParameters != null && options.RuntimeParameters.TryGetValue(name, out long pval))
+                        ctx.Push(StackValue.FromInt(pval));
+                    else
+                        throw new ParseException($"Runtime parameter '{name}' not provided.");
                     break;
                 }
                 case Opcode.PushIndex:
@@ -964,6 +1014,7 @@ public sealed class ParseEngine
         ctx.PopParams();
         ctx.PopFieldTable();
         ctx.CurrentStructIndex = savedStructIndex;
+        ctx.DecrementStructDepth(structIndex);
         ctx.Depth--;
     }
 
@@ -1018,6 +1069,7 @@ public sealed class ParseEngine
             Opcode.ReadCString => 2 + 1,       // field_id + encoding
             Opcode.ReadBytesFixed => 2 + 4,     // field_id + len
             Opcode.SkipFixed => 2,
+            Opcode.ReadPtrU32 or Opcode.ReadPtrU64 => 2,
             Opcode.AssertValue => ComputeAssertValueSize(bytecode, ip),
 
             Opcode.CallStruct => 2 + 1,        // struct_id + param_count
@@ -1030,6 +1082,7 @@ public sealed class ParseEngine
             Opcode.EmitBitsBegin => 4, // name_id + field_id
             Opcode.EmitStructEnd or Opcode.EmitArrayEnd or Opcode.EmitVariantEnd or
             Opcode.EmitBitsEnd => 0,
+            Opcode.EmitNull => 2,
 
             Opcode.ReadBytesDyn => 2,
             Opcode.ReadStringDyn => 2 + 1,
@@ -1038,7 +1091,7 @@ public sealed class ParseEngine
 
             Opcode.PushConstI64 or Opcode.PushConstF64 => 8,
             Opcode.PushConstStr or Opcode.PushFieldVal or Opcode.PushParam or
-            Opcode.StoreFieldVal => 2,
+            Opcode.StoreFieldVal or Opcode.PushFileParam => 2,
             Opcode.PushRuntimeVar => 1,
             Opcode.PushIndex => 0,
 

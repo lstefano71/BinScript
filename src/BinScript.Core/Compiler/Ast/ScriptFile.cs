@@ -21,4 +21,5 @@ public sealed record ScriptFile(
     IReadOnlyList<BitsStructDecl> BitsStructs,
     IReadOnlyList<EnumDecl> Enums,
     IReadOnlyList<ConstDecl> Constants,
+    IReadOnlyList<MapDecl> Maps,
     SourceSpan Span) : AstNode(Span);

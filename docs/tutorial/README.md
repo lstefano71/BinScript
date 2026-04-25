@@ -28,6 +28,11 @@ Learn to describe binary formats with BinScript through practical, progressively
 13. **[Walkthrough: WAV Audio](13-walkthrough-wav.md)** — RIFF chunk-based format with nested structures
 14. **[Walkthrough: PNG Image](14-walkthrough-png.md)** — Chunk iteration, CRC validation, and standard library usage
 
+### Integration
+15. **[Integrating BinScript from C](15-integration-c.md)** — Load the NativeAOT DLL, parse and produce BMP, save bytecode
+16. **[Integrating from Python](16-integration-python.md)** — Call the C-ABI via ctypes: compile, parse GIFs, cache bytecode
+17. **[Integrating from Go](17-integration-go.md)** — Load the DLL with syscall.LoadDLL, produce a playable WAV melody
+
 ---
 
 ## Prerequisites

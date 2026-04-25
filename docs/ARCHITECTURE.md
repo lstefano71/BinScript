@@ -56,7 +56,7 @@ BinScript/
 │   ├── BYTECODE.md
 │   ├── STDLIB.md
 │   ├── FUTURE_EXTENSIONS.md       ← planned language extensions
-│   ├── tutorial/                  ← progressive tutorial (14 chapters)
+│   ├── tutorial/                  ← progressive tutorial (17 chapters)
 │   └── IMPLEMENTATION_PLAN.md
 ├── stdlib/
 │   ├── pe.bsx
@@ -64,7 +64,8 @@ BinScript/
 │   ├── png.bsx
 │   ├── elf.bsx
 │   ├── bmp.bsx
-│   └── gif.bsx
+│   ├── gif.bsx
+│   └── wav.bsx
 ├── tests/
 │   ├── samples/
 │   │   ├── pe/       ← real binary files (tiny, valid)
@@ -72,7 +73,8 @@ BinScript/
 │   │   ├── png/
 │   │   ├── elf/
 │   │   ├── bmp/
-│   │   └── gif/
+│   │   ├── gif/
+│   │   └── wav/
 │   └── expected/
 │       ├── pe/       ← expected JSON output
 │       ├── zip/
@@ -80,6 +82,12 @@ BinScript/
 │       ├── elf/
 │       ├── bmp/
 │       └── gif/
+├── tools/
+│   ├── bsxtool/                    ← Python CLI for compile/parse/produce/disasm
+│   └── examples/                   ← Integration examples (C, Python, Go)
+│       ├── c/parse_bmp.c           ← C: BMP parse + round-trip produce
+│       ├── python/parse_gif.py     ← Python: GIF parse via ctypes
+│       └── go/produce_wav.go       ← Go: WAV produce (Twinkle Twinkle)
 └── src/
     ├── BinScript.sln
     ├── BinScript.Core/
@@ -136,6 +144,7 @@ BinScript/
     │   └── JsonDataSource.cs
     ├── BinScript.Interop/
     │   ├── BinScript.Interop.csproj    ← NativeAOT publish target
+    │   ├── binscript.h                  ← canonical C header (single source of truth)
     │   ├── NativeExports.cs            ← [UnmanagedCallersOnly] methods
     │   ├── HandleTable.cs              ← GCHandle-based opaque handle management
     │   └── ErrorState.cs               ← thread-local last error
@@ -159,7 +168,8 @@ BinScript/
             ├── PngTests.cs
             ├── ElfTests.cs
             ├── BmpTests.cs
-            └── GifTests.cs
+            ├── GifTests.cs
+            └── WavTests.cs
 ```
 
 ## 3. Core Interfaces
@@ -444,7 +454,9 @@ public enum ParseStrictness
 4. Uses thread-local storage for `binscript_last_error()`.
 5. Never throws exceptions across the native boundary — all errors are captured and surfaced via the error API.
 
-See [C-ABI Reference](C_ABI.md) for the complete function list.
+The canonical C header is at `src/BinScript.Interop/binscript.h` — this is the single source of truth for all C-ABI consumers. Working integration examples in C, Python, and Go live in `tools/examples/`.
+
+See [C-ABI Reference](C_ABI.md) for the complete function list and the maintenance checklist for keeping all consumers in sync when the API surface changes.
 
 ## 9. Design Decisions & Rationale
 

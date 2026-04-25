@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-04-25 22:42
+
+### Added
+- **docs/tutorial/15-integration-c.md** — Tutorial chapter: calling BinScript from C via dynamic DLL loading, BMP parse + produce round-trip, bytecode caching, error handling, memory management.
+- **docs/tutorial/16-integration-python.md** — Tutorial chapter: calling BinScript from Python via ctypes, GIF parsing, the `c_void_p` gotcha, bytecode caching.
+- **docs/tutorial/17-integration-go.md** — Tutorial chapter: calling BinScript from Go via syscall.LoadDLL, WAV produce with Twinkle Twinkle Little Star melody, base64 encoding for bytes fields.
+
+### Changed
+- **docs/tutorial/README.md** — Added "Integration" tier with chapters 15–17.
+- **docs/ARCHITECTURE.md** — Updated project structure tree (wav.bsx, WavTests.cs, binscript.h, tools/examples/), updated C-ABI section to reference canonical header and examples.
+- **.github/copilot-instructions.md** — Added C-ABI maintenance checklist reminder to instructions.
+
 ## 2026-04-25 22:36
 
 ### Added

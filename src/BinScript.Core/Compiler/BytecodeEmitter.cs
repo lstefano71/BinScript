@@ -220,7 +220,7 @@ public sealed class BytecodeEmitter
         if (field.Array is CountArraySpec count)
             CollectDottedPathsInExpr(count.Count, paths, lambdaParams);
         else if (field.Array is UntilArraySpec until)
-            CollectDottedPathsInExpr(until.Condition, paths, lambdaParams);
+            CollectUntilDottedPaths(until, field.Name, paths, lambdaParams);
         else if (field.Array is SentinelArraySpec sentinel)
             CollectSentinelDottedPaths(sentinel, field.Name, paths, lambdaParams);
         // Also scan struct call arguments
@@ -238,7 +238,7 @@ public sealed class BytecodeEmitter
                 if (arm.Array is CountArraySpec armCount)
                     CollectDottedPathsInExpr(armCount.Count, paths, lambdaParams);
                 else if (arm.Array is UntilArraySpec armUntil)
-                    CollectDottedPathsInExpr(armUntil.Condition, paths, lambdaParams);
+                    CollectUntilDottedPaths(armUntil, field.Name, paths, lambdaParams);
                 else if (arm.Array is SentinelArraySpec armSentinel)
                     CollectSentinelDottedPaths(armSentinel, field.Name, paths, lambdaParams);
             }
@@ -254,6 +254,28 @@ public sealed class BytecodeEmitter
     {
         var substituted = SubstituteSentinelParam(sentinel.Predicate, sentinel.ParamName, fieldName);
         CollectDottedPathsInExpr(substituted, paths, lambdaParams);
+    }
+
+    /// <summary>
+    /// Collect dotted paths from an @until condition, unwrapping any lambda.
+    /// E.g., <c>@until(s =&gt; s.marker == 0xFFD9)</c> on field "segments" → collects "segments.marker".
+    /// </summary>
+    private void CollectUntilDottedPaths(UntilArraySpec until, string fieldName,
+        HashSet<string> paths, HashSet<string> lambdaParams)
+    {
+        var condition = UnwrapUntilLambda(until.Condition, fieldName);
+        CollectDottedPathsInExpr(condition, paths, lambdaParams);
+    }
+
+    /// <summary>
+    /// If expr is a LambdaExpr, substitute the lambda parameter with fieldName in the body and return the body.
+    /// Otherwise return expr unchanged.
+    /// </summary>
+    private static Expression UnwrapUntilLambda(Expression expr, string fieldName)
+    {
+        if (expr is LambdaExpr lambda)
+            return SubstituteSentinelParam(lambda.Body, lambda.Parameter, fieldName);
+        return expr;
     }
 
     /// <summary>Replace sentinel lambda parameter references with the array field name.</summary>
@@ -1135,7 +1157,8 @@ public sealed class BytecodeEmitter
         // For until arrays, emit the condition check.
         if (arraySpec is UntilArraySpec untilSpec)
         {
-            EmitExpression(ctx, untilSpec.Condition);
+            var condition = UnwrapUntilLambda(untilSpec.Condition, fieldName);
+            EmitExpression(ctx, condition);
         }
 
         ctx.Builder.Emit(Opcode.ArrayEnd);

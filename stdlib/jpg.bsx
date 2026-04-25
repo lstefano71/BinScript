@@ -22,6 +22,16 @@ struct JpgSegment {
         0xFFDD => DriMarker,
         0xFFDA => SosMarker,
         0xFFFE => ComMarker,
+        // Standalone markers — no body (EOI, RST0-RST7)
+        0xFFD9 => EmptyMarkerBody,
+        0xFFD0 => EmptyMarkerBody,
+        0xFFD1 => EmptyMarkerBody,
+        0xFFD2 => EmptyMarkerBody,
+        0xFFD3 => EmptyMarkerBody,
+        0xFFD4 => EmptyMarkerBody,
+        0xFFD5 => EmptyMarkerBody,
+        0xFFD6 => EmptyMarkerBody,
+        0xFFD7 => EmptyMarkerBody,
         _ => GenericMarkerBody,
     },
 }
@@ -123,6 +133,11 @@ struct ScanComponent {
 struct ComMarker {
     length: u16,
     comment: string[length - 2],
+}
+
+// ─── Empty body for standalone markers (EOI, RST0-RST7) ───
+
+struct EmptyMarkerBody {
 }
 
 // ─── Generic marker body (unknown markers) ───

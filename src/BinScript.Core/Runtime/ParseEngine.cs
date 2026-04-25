@@ -375,13 +375,26 @@ public sealed class ParseEngine
                     var span = ctx.Input.Span;
                     int start = (int)ctx.Position;
                     int end = start;
-                    while (end < span.Length && span[end] != 0) end++;
+                    int nullTermSize;
+                    if ((StringEncoding)enc is StringEncoding.Utf16Le or StringEncoding.Utf16Be)
+                    {
+                        // UTF-16: scan for 2-byte null terminator (0x00 0x00)
+                        nullTermSize = 2;
+                        while (end + 1 < span.Length && (span[end] != 0 || span[end + 1] != 0))
+                            end += 2;
+                    }
+                    else
+                    {
+                        // Single-byte encodings: scan for 1-byte null
+                        nullTermSize = 1;
+                        while (end < span.Length && span[end] != 0) end++;
+                    }
                     int len = end - start;
                     string val = DecodeString(span.Slice(start, len), (StringEncoding)enc);
-                    ctx.Position = end + 1; // skip null terminator
+                    ctx.Position = end + nullTermSize; // skip null terminator
                     fieldTable.SetValue(fid, StackValue.FromString(val));
                     fieldTable.SetOffset(fid, offset);
-                    fieldTable.SetSize(fid, end + 1 - start);
+                    fieldTable.SetSize(fid, end + nullTermSize - start);
                     EmitFieldString(emitter, program, structMeta, fid, val);
                     break;
                 }

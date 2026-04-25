@@ -20,7 +20,7 @@ public class JpgTests
         return new BinScriptProgram(result.Program!);
     }
 
-    [Fact(Skip = "Requires JPEG test samples and compiler support for enum, @until")]
+    [Fact]
     public void Parse_Minimal_Jpg()
     {
         var program = CompileScript("jpg.bsx");

@@ -12,9 +12,13 @@ public static class BinScriptProgramJsonExtensions
 {
     /// <summary>Parse and return JSON directly (convenience).</summary>
     public static string ToJson(this BinScriptProgram program, ReadOnlyMemory<byte> input)
+        => ToJson(program, input, (ParseOptions?)null);
+
+    /// <summary>Parse and return JSON with runtime options (e.g., @param values).</summary>
+    public static string ToJson(this BinScriptProgram program, ReadOnlyMemory<byte> input, ParseOptions? options)
     {
         using var emitter = new JsonResultEmitter();
-        var result = program.Parse(input, emitter);
+        var result = program.Parse(input, emitter, options);
         if (!result.Success)
         {
             var errors = string.Join("; ", result.Diagnostics

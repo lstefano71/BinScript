@@ -474,5 +474,7 @@ See [C-ABI Reference](C_ABI.md) for the complete function list and the maintenan
 | Guarded recursion, not unlimited | Compiler verifies termination guards; runtime depth limit as safety net |
 | Circular structures deferred | JSON can't represent cycles; real binary formats are acyclic. See [ADR-002](adr/ADR-002-circular-structures-deferred.md) |
 | Reserved keyword escaping deferred | Keyword collisions are rare; backtick escaping planned for future. See [ADR-004](adr/ADR-004-keyword-escaping.md) |
+| Dual-mode ParseContext | Live-mode pointer chasing for FFI structs; buffer mode unchanged. See [ADR-005](adr/ADR-005-dual-mode-parse-context.md) |
+| BSX-Light ⎕NA superset | Compact ⎕NA-compatible front-end compiling to BinScript bytecode. See [ADR-006](adr/ADR-006-bsx-light-na-superset.md) |
 | Enums in JSON as names | Readable output; both name and numeric accepted on input |
 | `_variant` tag for match | Explicit discrimination avoids fragile inference in produce mode |

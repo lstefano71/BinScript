@@ -120,4 +120,4 @@ dotnet publish src/BinScript.Interop -c Release  # NativeAOT DLL
 
 ## License
 
-TBD
+[Unlicense](LICENSE)

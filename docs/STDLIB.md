@@ -252,6 +252,32 @@ DensityUnit
 
 ---
 
+### PCAP (`pcap.bsx`)
+
+**Packet capture** format used by tcpdump, Wireshark, and network analysis tools.
+Parses the little-endian variant (magic `0xA1B2C3D4`).
+
+**Features exercised:**
+- `@greedy` arrays — `packets: PacketRecord[] @greedy` reads packet records until the input is exhausted or a truncated record causes a parse error (the only stdlib example of `@greedy`)
+- `enum LinkType : u32` for link-layer types (Ethernet, Raw IP, etc.)
+- `bytes[incl_len]` for variable-length packet payloads
+- Graceful handling of truncated captures via `@greedy` error recovery
+
+**Test samples:**
+- `tests/samples/pcap/TNS_Oracle1.pcap` — 78 Ethernet packets (Oracle TNS traffic)
+
+**Structs defined:**
+```
+PcapFile (root), PcapHeader, PacketRecord
+```
+
+**Enums defined:**
+```
+LinkType
+```
+
+---
+
 ### Memory Examples (`memory/`)
 
 In-memory structure definitions demonstrating `ptr<T>` pointer support.
@@ -282,39 +308,39 @@ and `bits struct StartupFlags : u32`.
 
 ## Feature Coverage Matrix
 
-| Feature | PE | ZIP | PNG | ELF | BMP | GIF | JPG | mem/ |
-|---------|:--:|:---:|:---:|:---:|:---:|:---:|:---:|:----:|
-| Nested structs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `@seek` / `@at` | ✓ | ✓ | | ✓ | ✓ | | | |
-| `@let` cross-ref | ✓ | | | | | | | |
-| `@param` runtime | | | | | | | | ✓ |
-| `@map` pure expr | ✓ | | | | | | | |
-| `enum` | ✓ | ✓ | ✓ | ✓ | | ✓ | ✓ | |
-| `bits struct` | ✓ | ✓ | | ✓ | | ✓ | | ✓ |
-| `match` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | |
-| `match` with guards | ✓ | | | | | | | |
-| `when` guards | ✓ | ✓ | | | | | | |
-| Count-based arrays | ✓ | ✓ | | ✓ | | | ✓ | |
-| `@until` arrays | | | ✓ | | | | ✓ | |
-| `@until_sentinel` | ✓ | | | | | ✓ | | |
-| `@greedy` arrays | | | | | | | | |
-| `@derived` / `@crc32` | | ✓ | ✓ | | | | | |
-| `@align` | | | | | | | | |
-| `@coverage(partial)` | ✓ | | ✓ | ✓ | | | ✓ | |
-| `@input_size` | | ✓ | | | | | | |
-| `_index` | | ✓ | | | | | | |
-| `fixed_string` | ✓ | | ✓ | ✓ | | | ✓ | |
-| `cstring` | ✓ | | | | | | | ✓ |
-| `bytes[]` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | |
-| `ptr<T>` | | | | | | | | ✓ |
-| `ptr<T>?` nullable | | | | | | | | ✓ |
-| `@encoding` | | | | | | | | ✓ |
-| `@max_depth` | ✓ | | | | | | | |
-| Parameterized structs | ✓ | | ✓ | | | | | |
-| Tier 1 flat-path | | | | | ✓ | | | |
-| Expressions in counts | | | | | | ✓ | | |
-| Guarded recursion | ✓ | | | | | | | ✓ |
-| `.find()` array method | ✓ | | | | | | | |
+| Feature | PE | ZIP | PNG | ELF | BMP | GIF | JPG | PCAP | mem/ |
+|---------|:--:|:---:|:---:|:---:|:---:|:---:|:---:|:----:|:----:|
+| Nested structs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `@seek` / `@at` | ✓ | ✓ | | ✓ | ✓ | | | | |
+| `@let` cross-ref | ✓ | | | | | | | | |
+| `@param` runtime | | | | | | | | | ✓ |
+| `@map` pure expr | ✓ | | | | | | | | |
+| `enum` | ✓ | ✓ | ✓ | ✓ | | ✓ | ✓ | ✓ | |
+| `bits struct` | ✓ | ✓ | | ✓ | | ✓ | | | ✓ |
+| `match` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | | |
+| `match` with guards | ✓ | | | | | | | | |
+| `when` guards | ✓ | ✓ | | | | | | | |
+| Count-based arrays | ✓ | ✓ | | ✓ | | | ✓ | | |
+| `@until` arrays | | | ✓ | | | | ✓ | | |
+| `@until_sentinel` | ✓ | | | | | ✓ | | | |
+| `@greedy` arrays | | | | | | | | ✓ | |
+| `@derived` / `@crc32` | | ✓ | ✓ | | | | | | |
+| `@align` | | | | | | | | | |
+| `@coverage(partial)` | ✓ | | ✓ | ✓ | | | ✓ | | |
+| `@input_size` | | ✓ | | | | | | | |
+| `_index` | | ✓ | | | | | | | |
+| `fixed_string` | ✓ | | ✓ | ✓ | | | ✓ | | |
+| `cstring` | ✓ | | | | | | | | ✓ |
+| `bytes[]` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | |
+| `ptr<T>` | | | | | | | | | ✓ |
+| `ptr<T>?` nullable | | | | | | | | | ✓ |
+| `@encoding` | | | | | | | | | ✓ |
+| `@max_depth` | ✓ | | | | | | | | |
+| Parameterized structs | ✓ | | ✓ | | | | | | |
+| Tier 1 flat-path | | | | | ✓ | | | | |
+| Expressions in counts | | | | | | ✓ | | | |
+| Guarded recursion | ✓ | | | | | | | | ✓ |
+| `.find()` array method | ✓ | | | | | | | | |
 
 ## Test Strategy
 

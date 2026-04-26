@@ -21,6 +21,12 @@ public sealed class ParseEngine
         public int BodyStart;       // ip offset within struct for loop body start
         public ArrayLoopKind Kind;
         public long SentinelCheckpoint; // emitter checkpoint for sentinel rollback
+
+        // Greedy error-recovery state — saved before each iteration
+        public long GreedyEmitterCheckpoint;
+        public long GreedyPosition;
+        public int GreedyEvalStackCount;
+        public int GreedyEndIp;     // absolute ip right after ArrayEnd (pre-computed)
     }
 
     private enum ArrayLoopKind : byte { Count, Until, Sentinel, Greedy }
@@ -103,6 +109,10 @@ public sealed class ParseEngine
         int savedStructIndex = ctx.CurrentStructIndex;
         ctx.CurrentStructIndex = structIndex;
 
+        bool structSuccess = false;
+        try
+        {
+
         byte[] bytecode = program.Bytecode;
         int baseOffset = structMeta.BytecodeOffset;
         int endOffset = baseOffset + structMeta.BytecodeLength;
@@ -115,9 +125,10 @@ public sealed class ParseEngine
         {
             var opcode = (Opcode)bytecode[ip++];
 
+            try
+            {
             switch (opcode)
             {
-                // ─── Tier 1: Primitive Reads ───────────────────────
                 case Opcode.ReadU8:
                 {
                     ushort fid = ReadU16(bytecode, ref ip);
@@ -922,12 +933,18 @@ public sealed class ParseEngine
                 }
                 case Opcode.ArrayBeginGreedy:
                 {
+                    // Pre-compute the IP right after the matching ArrayEnd
+                    int endIp = SkipToArrayEnd(bytecode, ip, endOffset);
                     arrayStack.Push(new ArrayLoopState
                     {
                         Count = -1,
                         Index = 0,
                         BodyStart = ip - baseOffset,
                         Kind = ArrayLoopKind.Greedy,
+                        GreedyEndIp = endIp,
+                        GreedyEmitterCheckpoint = emitter.SaveCheckpoint(),
+                        GreedyPosition = ctx.Position,
+                        GreedyEvalStackCount = ctx.EvalStackCount,
                     });
                     ctx.PushArrayIndex(0);
                     break;
@@ -970,6 +987,15 @@ public sealed class ParseEngine
 
                         if (continueLoop && state.Index < options.MaxArrayElements)
                         {
+                            // For greedy arrays, update the checkpoint before the next iteration
+                            if (state.Kind == ArrayLoopKind.Greedy)
+                            {
+                                arrayStack.Pop();
+                                state.GreedyEmitterCheckpoint = emitter.SaveCheckpoint();
+                                state.GreedyPosition = ctx.Position;
+                                state.GreedyEvalStackCount = ctx.EvalStackCount;
+                                arrayStack.Push(state);
+                            }
                             ip = baseOffset + state.BodyStart;
                         }
                         else
@@ -1246,18 +1272,68 @@ public sealed class ParseEngine
 
                 default:
                     throw new ParseException($"Unknown opcode 0x{(byte)opcode:X2} at ip={ip - 1}.");
+            } // end switch
+            } // end try
+            catch (Exception ex) when (
+                (ex is ParseException or IndexOutOfRangeException or ArgumentOutOfRangeException)
+                && HasGreedyFrame(arrayStack))
+            {
+                // Greedy error recovery: rollback the failed element and end the array.
+                var state = UnwindToGreedyFrame(arrayStack, ctx);
+                emitter.RollbackToCheckpoint(state.GreedyEmitterCheckpoint);
+                ctx.Position = state.GreedyPosition;
+                // Trim eval stack back to saved depth
+                while (ctx.EvalStackCount > state.GreedyEvalStackCount)
+                    ctx.Pop();
+                // Jump to the pre-computed IP right after ArrayEnd (→ EmitArrayEnd)
+                ip = state.GreedyEndIp;
             }
-        }
+        } // end while
 
-        ctx.PopParams();
-        ctx.PopParamArrayStores();
-        ctx.LastChildFieldTable = fieldTable;
-        ctx.LastChildStructIndex = structIndex;
-        ctx.PopArrayElementScope();
-        ctx.PopFieldTable();
-        ctx.CurrentStructIndex = savedStructIndex;
-        ctx.DecrementStructDepth(structIndex);
-        ctx.Depth--;
+        structSuccess = true;
+
+        } // end try (struct body)
+        finally
+        {
+            // Always clean up context state, even on exception (needed for greedy recovery)
+            ctx.PopParams();
+            ctx.PopParamArrayStores();
+            if (structSuccess)
+            {
+                ctx.LastChildFieldTable = fieldTable;
+                ctx.LastChildStructIndex = structIndex;
+            }
+            ctx.PopArrayElementScope();
+            ctx.PopFieldTable();
+            ctx.CurrentStructIndex = savedStructIndex;
+            ctx.DecrementStructDepth(structIndex);
+            ctx.Depth--;
+        }
+    }
+
+    // ─── Helper: check if any frame on the array stack is Greedy ──
+    private static bool HasGreedyFrame(Stack<ArrayLoopState> arrayStack)
+    {
+        foreach (var state in arrayStack)
+        {
+            if (state.Kind == ArrayLoopKind.Greedy)
+                return true;
+        }
+        return false;
+    }
+
+    // ─── Helper: unwind array stack to the innermost Greedy frame ──
+    private static ArrayLoopState UnwindToGreedyFrame(Stack<ArrayLoopState> arrayStack, ParseContext ctx)
+    {
+        while (arrayStack.Count > 0)
+        {
+            var state = arrayStack.Pop();
+            ctx.PopArrayIndex();
+            if (state.Kind == ArrayLoopKind.Greedy)
+                return state;
+        }
+        // Should never reach here — caller checks HasGreedyFrame first
+        throw new InvalidOperationException("No greedy frame found on array stack.");
     }
 
     // ─── Helper: get last array field_id from context ──────────────

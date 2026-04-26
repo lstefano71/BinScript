@@ -1,0 +1,34 @@
+@default_endian(little)
+
+@root struct PcapFile {
+    header: PcapHeader,
+    packets: PacketRecord[] @greedy,
+}
+
+struct PcapHeader {
+    magic_number: u32 = 0xA1B2C3D4,
+    version_major: u16,
+    version_minor: u16,
+    thiszone: i32,
+    sigfigs: u32,
+    snaplen: u32,
+    network: LinkType,
+}
+
+struct PacketRecord {
+    ts_sec: u32,
+    ts_usec: u32,
+    incl_len: u32,
+    orig_len: u32,
+    data: bytes[incl_len],
+}
+
+enum LinkType : u32 {
+    Null = 0,
+    Ethernet = 1,
+    Ppp = 9,
+    RawIp = 101,
+    Ieee802_11 = 105,
+    LinuxSll = 113,
+    LinuxSll2 = 276,
+}

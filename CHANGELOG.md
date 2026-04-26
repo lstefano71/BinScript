@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-04-25 23:41
+
+### Added
+- **stdlib/pcap.bsx** — PCAP (packet capture) format definition. First stdlib example exercising `@greedy` arrays — reads packet records until input is exhausted or a truncated record causes a parse error. Includes `LinkType` enum and `PacketRecord` struct with variable-length payload.
+- **src/BinScript.Tests/Stdlib/PcapTests.cs** — Integration tests: header validation, packet count (78 packets), first-packet spot check, and truncation recovery test verifying `@greedy` discards the failing element and keeps prior packets.
+- **src/BinScript.Tests/Runtime/ParseEngineTests.cs** — Five new runtime-level `@greedy` tests: primitive array, empty input, struct array with trailing bytes, partial first element, and greedy after preceding fields.
+
+### Fixed
+- **`@greedy` error recovery** — Previously, `@greedy` arrays only checked `position < inputSize` at the loop boundary, behaving identically to `@until(@remaining == 0)`. Now implements the spec-defined behavior: saves an emitter checkpoint and position before each iteration; on parse error (e.g. truncated element), rolls back the failed element and ends the array, keeping all previously parsed elements. Added `try/finally` to `ExecuteStruct` for proper context cleanup during error unwinding.
+
+### Changed
+- **docs/STDLIB.md** — Added PCAP format section and PCAP column in the feature matrix. `@greedy` row now shows ✓ for PCAP.
+
 ## 2026-04-25 22:42
 
 ### Added

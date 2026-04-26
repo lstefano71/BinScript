@@ -2106,4 +2106,105 @@ struct Section {
         using var doc = JsonDocument.Parse(json);
         Assert.Equal(5, doc.RootElement.GetProperty("data").GetArrayLength());
     }
+
+    // ─── @greedy Array Tests ─────────────────────────────────────────
+
+    [Fact]
+    public void GreedyArray_U8_ReadsAllBytes()
+    {
+        var program = Compile("""
+            @root struct T {
+                items: u8[] @greedy,
+            }
+            """);
+
+        byte[] data = [0x01, 0x02, 0x03, 0x04, 0x05];
+        var json = ParseToJson(program, data);
+        using var doc = JsonDocument.Parse(json);
+        var items = doc.RootElement.GetProperty("items");
+        Assert.Equal(5, items.GetArrayLength());
+        Assert.Equal(1, items[0].GetInt64());
+        Assert.Equal(5, items[4].GetInt64());
+    }
+
+    [Fact]
+    public void GreedyArray_EmptyInput_ReturnsEmptyArray()
+    {
+        var program = Compile("""
+            @root struct T {
+                items: u8[] @greedy,
+            }
+            """);
+
+        byte[] data = [];
+        var json = ParseToJson(program, data);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal(0, doc.RootElement.GetProperty("items").GetArrayLength());
+    }
+
+    [Fact]
+    public void GreedyArray_Struct_ReadsUntilError()
+    {
+        var program = Compile("""
+            @root struct T {
+                records: Record[] @greedy,
+            }
+            struct Record {
+                a: u16le,
+                b: u16le,
+            }
+            """);
+
+        // 3 full records (12 bytes) + 1 incomplete byte
+        byte[] data = [0x01, 0x00, 0x02, 0x00, 0x03, 0x00, 0x04, 0x00, 0x05, 0x00, 0x06, 0x00, 0xFF];
+        var json = ParseToJson(program, data);
+        using var doc = JsonDocument.Parse(json);
+        var records = doc.RootElement.GetProperty("records");
+        Assert.Equal(3, records.GetArrayLength());
+        Assert.Equal(1, records[0].GetProperty("a").GetInt64());
+        Assert.Equal(2, records[0].GetProperty("b").GetInt64());
+        Assert.Equal(5, records[2].GetProperty("a").GetInt64());
+        Assert.Equal(6, records[2].GetProperty("b").GetInt64());
+    }
+
+    [Fact]
+    public void GreedyArray_Struct_PartialFirstElement_ReturnsEmptyArray()
+    {
+        var program = Compile("""
+            @root struct T {
+                records: Record[] @greedy,
+            }
+            struct Record {
+                a: u32le,
+                b: u32le,
+            }
+            """);
+
+        // Only 3 bytes — not enough for even one Record (8 bytes)
+        byte[] data = [0x01, 0x02, 0x03];
+        var json = ParseToJson(program, data);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal(0, doc.RootElement.GetProperty("records").GetArrayLength());
+    }
+
+    [Fact]
+    public void GreedyArray_WithPrecedingFields()
+    {
+        var program = Compile("""
+            @root struct T {
+                magic: u32le,
+                items: u16le[] @greedy,
+            }
+            """);
+
+        // 4-byte header + 3 u16 values
+        byte[] data = [0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x00, 0x02, 0x00, 0x03, 0x00];
+        var json = ParseToJson(program, data);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal(0xEFBEADDE, doc.RootElement.GetProperty("magic").GetUInt64());
+        var items = doc.RootElement.GetProperty("items");
+        Assert.Equal(3, items.GetArrayLength());
+        Assert.Equal(1, items[0].GetInt64());
+        Assert.Equal(3, items[2].GetInt64());
+    }
 }

@@ -21,6 +21,8 @@ public sealed class ParseEngine
         public int BodyStart;       // ip offset within struct for loop body start
         public ArrayLoopKind Kind;
         public long SentinelCheckpoint; // emitter checkpoint for sentinel rollback
+        public long ElementStartPosition; // position before current element read
+        public long LastElementPayloadSize; // byte size of the last completed element
 
         // Greedy error-recovery state — saved before each iteration
         public long GreedyEmitterCheckpoint;
@@ -753,6 +755,7 @@ public sealed class ParseEngine
                         0 => ctx.InputSize,
                         1 => ctx.Offset,
                         2 => ctx.Remaining,
+                        3 => arrayStack.Count > 0 ? arrayStack.Peek().LastElementPayloadSize : 0,
                         _ => 0,
                     };
                     ctx.Push(StackValue.FromInt(val));
@@ -923,6 +926,7 @@ public sealed class ParseEngine
                         Index = 0,
                         BodyStart = ip - baseOffset,
                         Kind = ArrayLoopKind.Count,
+                        ElementStartPosition = ctx.Position,
                     });
                     ctx.PushArrayIndex(0);
                     if (count <= 0)
@@ -942,6 +946,7 @@ public sealed class ParseEngine
                         Index = 0,
                         BodyStart = ip - baseOffset,
                         Kind = ArrayLoopKind.Until,
+                        ElementStartPosition = ctx.Position,
                     });
                     ctx.PushArrayIndex(0);
                     break;
@@ -954,6 +959,7 @@ public sealed class ParseEngine
                         Index = 0,
                         BodyStart = ip - baseOffset,
                         Kind = ArrayLoopKind.Sentinel,
+                        ElementStartPosition = ctx.Position,
                     });
                     ctx.PushArrayIndex(0);
                     break;
@@ -968,6 +974,7 @@ public sealed class ParseEngine
                         Index = 0,
                         BodyStart = ip - baseOffset,
                         Kind = ArrayLoopKind.Greedy,
+                        ElementStartPosition = ctx.Position,
                         GreedyEndIp = endIp,
                         GreedyEmitterCheckpoint = emitter.SaveCheckpoint(),
                         GreedyPosition = ctx.Position,
@@ -981,6 +988,8 @@ public sealed class ParseEngine
                     if (arrayStack.Count > 0)
                     {
                         var state = arrayStack.Pop();
+                        // Compute payload size of the element that was just read
+                        state.LastElementPayloadSize = ctx.Position - state.ElementStartPosition;
                         state.Index++;
                         arrayStack.Push(state);
                         ctx.SetCurrentArrayIndex(state.Index);
@@ -1014,6 +1023,9 @@ public sealed class ParseEngine
 
                         if (continueLoop && state.Index < options.MaxArrayElements)
                         {
+                            // Record start position for the next element
+                            state.ElementStartPosition = ctx.Position;
+
                             // For greedy arrays, update the checkpoint before the next iteration
                             if (state.Kind == ArrayLoopKind.Greedy)
                             {
@@ -1021,6 +1033,12 @@ public sealed class ParseEngine
                                 state.GreedyEmitterCheckpoint = emitter.SaveCheckpoint();
                                 state.GreedyPosition = ctx.Position;
                                 state.GreedyEvalStackCount = ctx.EvalStackCount;
+                                arrayStack.Push(state);
+                            }
+                            else
+                            {
+                                // Update the state on the stack with the new ElementStartPosition
+                                arrayStack.Pop();
                                 arrayStack.Push(state);
                             }
                             ip = baseOffset + state.BodyStart;

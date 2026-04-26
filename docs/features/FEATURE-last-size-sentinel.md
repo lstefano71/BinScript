@@ -24,20 +24,19 @@ BinScript currently supports `@until(@remaining == 0)` and `@until(field == valu
 
 ```bsx
 struct MultiString {
-    @until(@last_size == 0)
-    items: cstring @encoding(utf16le)[]
+    items: cstring[] @until(@last_size == 1)
 }
 ```
 
-This reads null-terminated UTF-16 strings until it encounters an empty one (just a null terminator — 2 bytes for UTF-16, consumed size = 0 after stripping the terminator, or alternatively the raw size is 2 but the string length is 0).
+This reads null-terminated strings until it encounters an empty one (just a null terminator — 1 byte consumed). For UTF-16 cstrings, use `@until(@last_size == 2)` since the wide null terminator is 2 bytes.
 
 ### Semantic Precision
 
-`@last_size` returns the **payload size** of the last element (excluding the terminator for `cstring`). An empty cstring has `@last_size == 0`. This matches the intuitive meaning: "stop when you read an empty string."
+`@last_size` returns the **bytes consumed** by the last element (position delta). For `cstring`, this includes the null terminator — an empty cstring (`"\0"`) has `@last_size == 1`. For UTF-16 cstrings, an empty string (`\0\0`) has `@last_size == 2`.
 
 ### Relationship to BSX-Light
 
-In BSX-Light, the `00T` type specifier compiles to the same bytecode as `cstring[] @until(@last_size == 0)`. The `00T` is syntactic sugar; `@last_size` is the primitive.
+In BSX-Light, the `00T` type specifier compiles to `cstring[] @until(@last_size == 1)` (or `@last_size == 2` for wide strings). The `00T` is syntactic sugar; `@last_size` is the primitive.
 
 ## Implementation
 

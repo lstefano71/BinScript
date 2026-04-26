@@ -2033,6 +2033,10 @@ public sealed class BytecodeEmitter
                 ctx.Builder.Emit(Opcode.PushRuntimeVar);
                 ctx.Builder.EmitU8((byte)RuntimeVar.InputSize);
                 break;
+            case "last_size":
+                ctx.Builder.Emit(Opcode.PushRuntimeVar);
+                ctx.Builder.EmitU8((byte)RuntimeVar.LastSize);
+                break;
 
             case "sizeof":
                 if (fn.Args.Count > 0 && fn.Args[0] is IdentifierExpr sizeId)

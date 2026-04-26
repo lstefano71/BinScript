@@ -16,6 +16,7 @@ public enum RuntimeVar : byte
     InputSize = 0,
     Offset = 1,
     Remaining = 2,
+    LastSize = 3,
 }
 
 /// <summary>Metadata for a struct definition in the bytecode.</summary>

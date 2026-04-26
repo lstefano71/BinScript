@@ -152,7 +152,7 @@ These instructions handle flat, sequential struct reads with no control flow. A 
 | `PUSH_CONST_STR` | 0x82 | string_id:u16 | Push string constant |
 | `PUSH_FIELD_VAL` | 0x83 | field_id:u16 | Push a previously parsed field's value |
 | `PUSH_PARAM` | 0x84 | param_idx:u16 | Push struct parameter by index |
-| `PUSH_RUNTIME_VAR` | 0x85 | var_id:u8 | Push runtime var (0=@input_size, 1=@offset, 2=@remaining) |
+| `PUSH_RUNTIME_VAR` | 0x85 | var_id:u8 | Push runtime var (0=@input_size, 1=@offset, 2=@remaining, 3=@last_size) |
 | `PUSH_INDEX` | 0x86 | — | Push current array `_index` |
 | `STORE_FIELD_VAL` | 0x87 | field_id:u16 | Pop stack, store into field value table. Used for `@map` derived fields and array search results |
 | `PUSH_FILE_PARAM` | 0x88 | name_idx:u16 | Push a file-level runtime parameter by name (string table index). Used for `base_ptr` in pointer computations |

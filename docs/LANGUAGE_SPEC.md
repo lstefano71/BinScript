@@ -76,9 +76,9 @@ All directives start with `@`:
 @derived        @assert             @encoding
 @until          @until_sentinel     @greedy
 @input_size     @offset             @remaining
-@sizeof         @offsetof           @count
-@strlen         @crc32              @adler32
-@map            @max_depth          @inline
+@last_size      @sizeof             @offsetof
+@count          @strlen             @crc32
+@adler32        @map                @max_depth
 @show_ptr
 ```
 
@@ -745,6 +745,7 @@ In produce mode, the `_variant` field is required to determine which arm to prod
 | `@input_size` | `u64` | Total size of the input buffer in bytes |
 | `@offset` | `u64` | Current read position (bytes from start) |
 | `@remaining` | `u64` | Bytes remaining: `@input_size - @offset` |
+| `@last_size` | `u64` | Bytes consumed by the last array element (0 outside arrays) |
 | `_index` | `u64` | Current array element index (only valid inside arrays) |
 
 ## 9. Built-in Functions

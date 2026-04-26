@@ -919,6 +919,10 @@ public sealed class Parser
                 Advance();
                 return new FunctionCallExpr("remaining", [], tok.Span);
 
+            case TokenType.LastSize:
+                Advance();
+                return new FunctionCallExpr("last_size", [], tok.Span);
+
             case TokenType.Offset:
                 Advance();
                 return new FunctionCallExpr("offset", [], tok.Span);

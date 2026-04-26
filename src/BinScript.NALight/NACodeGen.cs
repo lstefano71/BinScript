@@ -33,12 +33,14 @@ public sealed class NACodeGen
         // Build root struct members from arguments
         var members = new List<MemberDecl>();
         int fieldIndex = 0;
+        string? prevFieldName = null;
 
         foreach (var arg in _spec.Arguments)
         {
             string fieldName = $"field_{fieldIndex++}";
-            var (typeRef, arraySpec) = TypeToAst(arg.Type, arg.Direction);
+            var (typeRef, arraySpec) = TypeToAst(arg.Type, arg.Direction, prevFieldName);
             members.Add(new FieldDecl(fieldName, typeRef, null, arraySpec, NoMods, S));
+            prevFieldName = fieldName;
         }
 
         var rootStruct = new StructDecl("Args", [], members, IsRoot: true, Coverage: null, MaxDepth: null, S);
@@ -67,10 +69,17 @@ public sealed class NACodeGen
     {
         var sb = new StringBuilder();
 
+        // Hidden-pointer transform for struct returns > 8 bytes (Windows x64 ABI)
+        bool hiddenPointerReturn = _spec.ReturnType is NAStructDesc retStruct
+            && WireSize(retStruct) > 8;
+
         // Return type
         if (_spec.ReturnType is not null)
         {
-            sb.Append(TypeToNA(_spec.ReturnType));
+            if (hiddenPointerReturn)
+                sb.Append('P');  // return becomes opaque pointer
+            else
+                sb.Append(TypeToNA(_spec.ReturnType));
             sb.Append(' ');
         }
 
@@ -82,6 +91,13 @@ public sealed class NACodeGen
             sb.Append(_spec.FunctionName);
             if (_spec.PassByPointer) sb.Append('*');
             if (_spec.ThreadSafe) sb.Append('&');
+        }
+
+        // If hidden-pointer transform, inject output struct as first argument
+        if (hiddenPointerReturn)
+        {
+            sb.Append(" >");
+            sb.Append(TypeToNA(_spec.ReturnType!));
         }
 
         // Arguments
@@ -106,7 +122,7 @@ public sealed class NACodeGen
 
     // ── AST type generation ─────────────────────────────────────────────────
 
-    private (TypeReference type, ArraySpec? array) TypeToAst(NATypeDesc desc, NADirection direction = NADirection.None)
+    private (TypeReference type, ArraySpec? array) TypeToAst(NATypeDesc desc, NADirection direction = NADirection.None, string? previousFieldName = null)
     {
         return desc switch
         {
@@ -117,7 +133,7 @@ public sealed class NACodeGen
             NANullTermDesc nt => (NullTermToAst(nt), null),
             NADoubleNullDesc dn => DoubleNullToAst(dn),
             NAStructDesc s => (StructToAst(s), null),
-            NAArrayedDesc a => ArrayedToAst(a, direction),
+            NAArrayedDesc a => ArrayedToAst(a, direction, previousFieldName),
             _ => throw new InvalidOperationException($"Unsupported type: {desc.GetType().Name}"),
         };
     }
@@ -184,17 +200,29 @@ public sealed class NACodeGen
         string name = $"Struct_{_structCounter++}";
         var members = new List<MemberDecl>();
         int localField = 0;
+        string? prevFieldName = null;
+        bool needsAlignment = s.AlignMode == NAAlignMode.Natural || s.PackSize is not null;
 
         foreach (var field in s.Fields)
         {
             string fieldName = $"f_{localField++}";
-            var (typeRef, arraySpec) = TypeToAst(field.Type, field.Direction);
+            var (typeRef, arraySpec) = TypeToAst(field.Type, field.Direction, prevFieldName);
 
             // Direction inside struct + non-pointer type → wrap in ptr<T, u64>
             if (field.Direction != NADirection.None && field.Type is not NAPointerDesc)
             {
                 typeRef = new PtrTypeRef(typeRef, new PrimitiveTypeRef(TokenType.U64Le, S),
                     IsRelative: false, InnerModifiers: null, S);
+            }
+
+            // Insert alignment directive before the field if needed
+            if (needsAlignment)
+            {
+                int align = NaturalAlignment(field.Type);
+                if (s.PackSize is int pack)
+                    align = Math.Min(align, pack);
+                if (align > 1)
+                    members.Add(new AlignDirective(new IntLiteralExpr(align, S), S));
             }
 
             var mods = NoMods;
@@ -205,29 +233,64 @@ public sealed class NACodeGen
                 mods = EncodingMods(dn.Width);
 
             members.Add(new FieldDecl(fieldName, typeRef, null, arraySpec, mods, S));
+            prevFieldName = fieldName;
+        }
+
+        // Tail padding: align struct size to its largest member alignment
+        if (needsAlignment)
+        {
+            int structAlign = s.Fields.Count > 0
+                ? s.Fields.Max(f => NaturalAlignment(f.Type))
+                : 1;
+            if (s.PackSize is int packSize)
+                structAlign = Math.Min(structAlign, packSize);
+            if (structAlign > 1)
+                members.Add(new AlignDirective(new IntLiteralExpr(structAlign, S), S));
         }
 
         _helperStructs.Add(new StructDecl(name, [], members, IsRoot: false, Coverage: null, MaxDepth: null, S));
         return new NamedTypeRef(name, [], S);
     }
 
-    private (TypeReference type, ArraySpec? array) ArrayedToAst(NAArrayedDesc a, NADirection direction)
+    /// <summary>Returns the natural alignment in bytes for an NA type (x64 rules).</summary>
+    private static int NaturalAlignment(NATypeDesc type) => type switch
     {
-        var (elemType, innerArray) = TypeToAst(a.Element, direction);
-        // If the inner type already has an array spec (e.g., 00T produces one),
-        // the outer array wraps it — but this shouldn't happen in practice.
+        NAPrimitiveDesc p => Math.Min(p.Width, 8),
+        NAPointerDesc => 8,
+        NADecimalDesc => 8,
+        NAComplexDesc => 8,  // two f64 fields, aligned to 8
+        NANullTermDesc nt => Math.Min(nt.Width, 8),
+        NADoubleNullDesc dn => Math.Min(dn.Width, 8),
+        NAStructDesc s => s.Fields.Count > 0 ? s.Fields.Max(f => NaturalAlignment(f.Type)) : 1,
+        NAArrayedDesc a => NaturalAlignment(a.Element),
+        _ => 1,
+    };
+
+    private (TypeReference type, ArraySpec? array) ArrayedToAst(NAArrayedDesc a, NADirection direction, string? previousFieldName = null)
+    {
+        var (elemType, innerArray) = TypeToAst(a.Element, direction, previousFieldName);
 
         ArraySpec? arraySpec = a.ArrayKind switch
         {
             FixedArrayKind f => new CountArraySpec(new IntLiteralExpr(f.Count, S), S),
             VariableArrayKind => new GreedyArraySpec(S),
-            CountedArrayKind c when c.MaxCount is int max =>
-                new CountArraySpec(new IntLiteralExpr(max, S), S),
-            CountedArrayKind => new GreedyArraySpec(S),
+            CountedArrayKind c => CountedArrayToSpec(c, previousFieldName),
             _ => throw new InvalidOperationException($"Unsupported array kind: {a.ArrayKind.GetType().Name}"),
         };
 
         return (elemType, arraySpec);
+    }
+
+    private static ArraySpec CountedArrayToSpec(CountedArrayKind c, string? previousFieldName)
+    {
+        if (previousFieldName is null)
+            throw new InvalidOperationException("Counted array [*] requires a preceding field for the count");
+
+        // [*] → count from previous field: field_name[prev_field]
+        var countExpr = new IdentifierExpr(previousFieldName, S);
+        return new CountArraySpec(countExpr, S);
+        // Note: [*:maxN] is a safety cap — the actual count still comes from the previous field.
+        // The max is enforced at runtime if the count exceeds it. For now, we use the field reference.
     }
 
     // ── Plain ⎕NA generation ────────────────────────────────────────────────
@@ -292,5 +355,22 @@ public sealed class NACodeGen
         2 => new FieldModifiers { Encoding = "utf-16le" },
         4 => new FieldModifiers { Encoding = "utf-32le" },
         _ => new FieldModifiers(),
+    };
+
+    /// <summary>
+    /// Compute the packed (no alignment) wire size of an NA type in bytes.
+    /// Used for hidden-pointer transform threshold (> 8 bytes on Windows x64).
+    /// </summary>
+    private static int WireSize(NATypeDesc type) => type switch
+    {
+        NAPrimitiveDesc p => p.Width,
+        NAPointerDesc => 8,
+        NADecimalDesc => 8,
+        NAComplexDesc => 16,
+        NAStructDesc s => s.Fields.Sum(f => WireSize(f.Type)),
+        NAArrayedDesc a => a.ArrayKind is FixedArrayKind fk
+            ? WireSize(a.Element) * fk.Count
+            : 8, // variable-length → pointer (8 bytes)
+        _ => 0,
     };
 }

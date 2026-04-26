@@ -119,12 +119,16 @@ The returned function follows `⎕NA` argument conventions exactly (`⊂` for si
 
 ## Consequences
 
-- New project/namespace: `BinScript.NALight` (or similar) containing the BSX-Light parser
+- New project/namespace: `BinScript.NALight` containing the BSX-Light lexer, parser, and code generator
 - `BinScript.Core` gains dual-mode `ParseContext` (ADR-005) — cherry-pickable independently
 - `BinScript.Core` gains `@last_size` sentinel primitive — cherry-pickable independently
 - `BinScript.Interop` gains C-ABI functions for BSX-Light compile/execute
 - APL integration layer (`tools/bsxtool/` or new `tools/bsxna/`) provides `bsx∆NA`
 - Future: bypass `⎕NA` entirely via `libffi` for full ABI coverage including two-register struct returns
+
+### Known Limitation: JSON-only data exchange (v1)
+
+The current APL integration uses `⎕JSON` to serialize/deserialize structured data between APL and BinScript. This works correctly but incurs serialization overhead on every call. A future DWA-based `IResultEmitter`/`IDataSource` implementation will directly create/read APL nested arrays in the workspace, eliminating the JSON round-trip.
 
 ## Related
 

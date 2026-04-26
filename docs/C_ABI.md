@@ -70,6 +70,12 @@ int main(void) {
     // ... write bytecode to file for later reuse ...
     free(bytecode);
 
+    // 5. Parse from live memory (e.g., after a DLL call returns a struct pointer)
+    // WARNING: Live mode is inherently unsafe — pointer validity is the caller's risk.
+    //   void* struct_ptr = ...;  // e.g., from an FFI call
+    //   const char* live_json = binscript_to_json_live(prog, (uintptr_t)struct_ptr, sizeof(MyStruct), NULL);
+    //   if (live_json) { ... binscript_mem_free((void*)live_json); }
+
     binscript_free(prog);
     return 0;
 }

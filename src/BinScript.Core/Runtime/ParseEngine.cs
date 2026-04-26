@@ -38,9 +38,36 @@ public sealed class ParseEngine
         ParseOptions? options = null,
         int rootStructIndex = -1)
     {
+        var ctx = new ParseContext(input);
+        return ParseCore(program, ctx, emitter, options, rootStructIndex, input.Length);
+    }
+
+    /// <summary>
+    /// Parse from live process memory. Position is a logical offset;
+    /// actual read address = <paramref name="baseAddress"/> + offset.
+    /// </summary>
+    public ParseResult ParseLive(
+        BytecodeProgram program,
+        nint baseAddress,
+        long sizeHint,
+        IResultEmitter emitter,
+        ParseOptions? options = null,
+        int rootStructIndex = -1)
+    {
+        var ctx = new ParseContext(baseAddress, sizeHint);
+        return ParseCore(program, ctx, emitter, options, rootStructIndex, ctx.InputSize);
+    }
+
+    private ParseResult ParseCore(
+        BytecodeProgram program,
+        ParseContext ctx,
+        IResultEmitter emitter,
+        ParseOptions? options,
+        int rootStructIndex,
+        long inputSize)
+    {
         options ??= new ParseOptions();
         var diagnostics = new List<Diagnostic>();
-        var ctx = new ParseContext(input);
 
         int entryStruct = rootStructIndex >= 0 ? rootStructIndex : program.RootStructIndex;
         if (entryStruct < 0 || entryStruct >= program.Structs.Length)
@@ -48,7 +75,7 @@ public sealed class ParseEngine
             diagnostics.Add(new Diagnostic(
                 DiagnosticSeverity.Error, "PE001", "No root struct found.",
                 default));
-            return new ParseResult(false, null, diagnostics, 0, input.Length);
+            return new ParseResult(false, null, diagnostics, 0, inputSize);
         }
 
         try
@@ -63,18 +90,18 @@ public sealed class ParseEngine
         {
             diagnostics.Add(new Diagnostic(
                 DiagnosticSeverity.Error, "PE100", ex.Message, default));
-            return new ParseResult(false, null, diagnostics, ctx.Position, input.Length);
+            return new ParseResult(false, null, diagnostics, ctx.Position, inputSize);
         }
         catch (Exception ex) when (ex is IndexOutOfRangeException or ArgumentOutOfRangeException)
         {
             diagnostics.Add(new Diagnostic(
                 DiagnosticSeverity.Error, "PE101",
                 $"Read past end of input at position {ctx.Position}.", default));
-            return new ParseResult(false, null, diagnostics, ctx.Position, input.Length);
+            return new ParseResult(false, null, diagnostics, ctx.Position, inputSize);
         }
 
         bool success = !diagnostics.Exists(d => d.Severity == DiagnosticSeverity.Error);
-        return new ParseResult(success, null, diagnostics, ctx.Position, input.Length);
+        return new ParseResult(success, null, diagnostics, ctx.Position, inputSize);
     }
 
     private void ExecuteStruct(
@@ -383,8 +410,8 @@ public sealed class ParseEngine
                     ushort fid = ReadU16(bytecode, ref ip);
                     byte enc = bytecode[ip++];
                     long offset = ctx.Position;
-                    var span = ctx.Input.Span;
-                    int start = (int)ctx.Position;
+                    var span = ctx.GetSpanToEnd();
+                    int start = 0; // span is already offset to ctx.Position
                     int end = start;
                     int nullTermSize;
                     if ((StringEncoding)enc is StringEncoding.Utf16Le or StringEncoding.Utf16Be)
@@ -402,7 +429,7 @@ public sealed class ParseEngine
                     }
                     int len = end - start;
                     string val = DecodeString(span.Slice(start, len), (StringEncoding)enc);
-                    ctx.Position = end + nullTermSize; // skip null terminator
+                    ctx.Position += end + nullTermSize; // skip null terminator
                     fieldTable.SetValue(fid, StackValue.FromString(val));
                     fieldTable.SetOffset(fid, offset);
                     fieldTable.SetSize(fid, end + nullTermSize - start);
@@ -1614,11 +1641,11 @@ public sealed class ParseEngine
     // ─── Input access helpers ──────────────────────────────────────
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static ReadOnlySpan<byte> input(ParseContext ctx) =>
-        ctx.Input.Span.Slice((int)ctx.Position);
+        ctx.GetSpanToEnd();
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static ReadOnlySpan<byte> inputSpan(ParseContext ctx, int length) =>
-        ctx.Input.Span.Slice((int)ctx.Position, length);
+        ctx.GetSpan(length);
 
     // ─── String decoding ───────────────────────────────────────────
     private static string DecodeString(ReadOnlySpan<byte> bytes, StringEncoding encoding)

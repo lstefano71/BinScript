@@ -77,4 +77,36 @@ public static class BinScriptProgramJsonExtensions
         }
         return result.OutputBytes!;
     }
+
+    // ─── Live-mode JSON convenience ─────────────────────────────────────
+
+    /// <summary>Parse from live process memory and return JSON directly.</summary>
+    public static string ToJsonLive(this BinScriptProgram program, nint baseAddress, long sizeHint, ParseOptions? options = null)
+    {
+        using var emitter = new JsonResultEmitter();
+        var result = program.ParseLive(baseAddress, sizeHint, emitter, options);
+        if (!result.Success)
+        {
+            var errors = string.Join("; ", result.Diagnostics
+                .Where(d => d.Severity == DiagnosticSeverity.Error)
+                .Select(d => d.Message));
+            throw new ParseException($"Parse failed: {errors}");
+        }
+        return emitter.GetJson();
+    }
+
+    /// <summary>Parse from live process memory using a named entry point and return JSON.</summary>
+    public static string ToJsonLive(this BinScriptProgram program, nint baseAddress, long sizeHint, string entryPoint, ParseOptions? options = null)
+    {
+        using var emitter = new JsonResultEmitter();
+        var result = program.ParseLive(baseAddress, sizeHint, entryPoint, emitter, options);
+        if (!result.Success)
+        {
+            var errors = string.Join("; ", result.Diagnostics
+                .Where(d => d.Severity == DiagnosticSeverity.Error)
+                .Select(d => d.Message));
+            throw new ParseException($"Parse failed: {errors}");
+        }
+        return emitter.GetJson();
+    }
 }

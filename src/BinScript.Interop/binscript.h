@@ -132,6 +132,45 @@ const char* binscript_to_json_entry(BinScript* script,
                                      const char* params_json_utf8);
 
 /* ═══════════════════════════════════════════════════════
+ *  Parse Live: Process memory → JSON
+ * ═══════════════════════════════════════════════════════ */
+
+/**
+ * Parse directly from a process memory address into JSON using the @root entry point.
+ * The engine reads from `base_address + offset` for each field.
+ * Pointer fields (ptr<T>) are chased at their absolute addresses.
+ *
+ * WARNING: Live mode is inherently unsafe. Pointer validity and memory
+ * accessibility are the caller's responsibility.
+ *
+ * @param script          Compiled program.
+ * @param base_address    Start address of the struct in process memory.
+ * @param size_hint       Advisory total size in bytes. 0 = unknown (unbounded).
+ * @param params_json_utf8 Runtime parameters as JSON. NULL or "{}" if none.
+ * @return JSON string (caller must free with binscript_mem_free), or NULL on error.
+ */
+const char* binscript_to_json_live(BinScript* script,
+                                    uintptr_t base_address,
+                                    size_t size_hint,
+                                    const char* params_json_utf8);
+
+/**
+ * Parse from process memory using a named entry point.
+ *
+ * @param script          Compiled program.
+ * @param entry_utf8      Struct name. UTF-8, null-terminated.
+ * @param base_address    Start address of the struct in process memory.
+ * @param size_hint       Advisory total size in bytes. 0 = unknown.
+ * @param params_json_utf8 Runtime parameters. NULL or "{}" if none.
+ * @return JSON string (caller must free with binscript_mem_free), or NULL on error.
+ */
+const char* binscript_to_json_live_entry(BinScript* script,
+                                          const char* entry_utf8,
+                                          uintptr_t base_address,
+                                          size_t size_hint,
+                                          const char* params_json_utf8);
+
+/* ═══════════════════════════════════════════════════════
  *  Produce: JSON → Binary
  * ═══════════════════════════════════════════════════════ */
 

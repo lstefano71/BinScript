@@ -207,6 +207,57 @@ public static unsafe class NativeExports
         }
     }
 
+    // ── Parse Live: Process memory → JSON ────────────────────────
+
+    /// <summary>
+    /// Parse directly from a process memory address into JSON using the @root entry point.
+    /// The base address is where the struct begins; the engine reads from
+    /// <c>baseAddress + offset</c> for each field.
+    /// </summary>
+    [UnmanagedCallersOnly(EntryPoint = "binscript_to_json_live")]
+    public static byte* ToJsonLive(IntPtr scriptHandle, nint baseAddress, nuint sizeHint, byte* paramsJson)
+    {
+        try
+        {
+            ErrorState.Clear();
+            var program = HandleTable.Get<BinScriptProgram>(scriptHandle);
+            if (program is null) { ErrorState.Set("Invalid program handle"); return null; }
+
+            var options = BuildParseOptions(paramsJson);
+            string json = program.ToJsonLive(baseAddress, (long)sizeHint, options);
+            return AllocUtf8(json);
+        }
+        catch (Exception ex)
+        {
+            ErrorState.Set(ex.Message);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Parse directly from a process memory address into JSON using a named entry point.
+    /// </summary>
+    [UnmanagedCallersOnly(EntryPoint = "binscript_to_json_live_entry")]
+    public static byte* ToJsonLiveEntry(IntPtr scriptHandle, byte* entry, nint baseAddress, nuint sizeHint, byte* paramsJson)
+    {
+        try
+        {
+            ErrorState.Clear();
+            var program = HandleTable.Get<BinScriptProgram>(scriptHandle);
+            if (program is null) { ErrorState.Set("Invalid program handle"); return null; }
+
+            string entryPoint = Marshal.PtrToStringUTF8((IntPtr)entry) ?? "";
+            var options = BuildParseOptions(paramsJson);
+            string json = program.ToJsonLive(baseAddress, (long)sizeHint, entryPoint, options);
+            return AllocUtf8(json);
+        }
+        catch (Exception ex)
+        {
+            ErrorState.Set(ex.Message);
+            return null;
+        }
+    }
+
     // ── Produce: JSON → Binary ──────────────────────────────────
 
     [UnmanagedCallersOnly(EntryPoint = "binscript_from_json_static_size")]

@@ -204,6 +204,24 @@ def _setup_signatures(lib: ctypes.CDLL) -> None:
     lib.binscript_version.restype = ctypes.c_char_p
     lib.binscript_version.argtypes = []
 
+    # Parse live (process memory → JSON)
+    lib.binscript_to_json_live.restype = ctypes.c_void_p  # char* we must free
+    lib.binscript_to_json_live.argtypes = [
+        ctypes.c_void_p,   # script_handle
+        ctypes.c_size_t,   # base_address (uintptr_t)
+        ctypes.c_size_t,   # size_hint
+        ctypes.c_char_p,   # params_json_utf8
+    ]
+
+    lib.binscript_to_json_live_entry.restype = ctypes.c_void_p
+    lib.binscript_to_json_live_entry.argtypes = [
+        ctypes.c_void_p,   # script_handle
+        ctypes.c_char_p,   # entry_utf8
+        ctypes.c_size_t,   # base_address (uintptr_t)
+        ctypes.c_size_t,   # size_hint
+        ctypes.c_char_p,   # params_json_utf8
+    ]
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Helper: check errors

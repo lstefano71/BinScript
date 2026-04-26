@@ -21,11 +21,25 @@ public sealed class ArraySearchState
 /// <summary>
 /// Runtime state/context for the parse VM.
 /// Holds the cursor, stacks, and per-struct field tables.
+/// Supports two modes: buffer mode (ReadOnlyMemory&lt;byte&gt;) and live mode (raw process memory addresses).
 /// </summary>
 public sealed class ParseContext
 {
     public ReadOnlyMemory<byte> Input { get; }
     public long Position { get; set; }
+
+    /// <summary>True when operating in live-memory mode (pointer dereferences read from process memory).</summary>
+    public bool IsLiveMode { get; }
+
+    /// <summary>
+    /// Base address for live-mode address computation.
+    /// In buffer mode this is 0 (unused). In live mode this is the base address
+    /// of the struct being parsed, so that <c>actual_address = BaseAddress + Position</c>.
+    /// </summary>
+    public nint BaseAddress { get; }
+
+    /// <summary>Advisory size hint for live mode. 0 = unknown (unbounded).</summary>
+    private readonly long _liveSizeHint;
 
     // Position stack for @at blocks (SeekPush/SeekPop)
     private readonly Stack<long> _positionStack = new();
@@ -67,15 +81,61 @@ public sealed class ParseContext
     // Search state stack for nested .find()/.any()/.all() calls
     private readonly Stack<ArraySearchState> _searchStack = new();
 
+    /// <summary>Buffer mode constructor — reads from a contiguous byte buffer.</summary>
     public ParseContext(ReadOnlyMemory<byte> input)
     {
         Input = input;
+        IsLiveMode = false;
+        BaseAddress = 0;
+        _liveSizeHint = 0;
+    }
+
+    /// <summary>
+    /// Live mode constructor — reads directly from process memory via unsafe pointer dereference.
+    /// Position remains a logical offset; actual read address = <paramref name="baseAddress"/> + Position.
+    /// </summary>
+    /// <param name="baseAddress">Start address of the struct in process memory.</param>
+    /// <param name="sizeHint">Advisory total size in bytes. 0 = unknown (unbounded reads, caller's risk).</param>
+    public ParseContext(nint baseAddress, long sizeHint = 0)
+    {
+        Input = default;
+        IsLiveMode = true;
+        BaseAddress = baseAddress;
+        _liveSizeHint = sizeHint;
     }
 
     // Runtime variables
-    public long InputSize => Input.Length;
+    public long InputSize => IsLiveMode
+        ? (_liveSizeHint > 0 ? _liveSizeHint : long.MaxValue)
+        : Input.Length;
     public long Offset => Position;
     public long Remaining => InputSize - Position;
+
+    /// <summary>
+    /// Read <paramref name="length"/> bytes starting at the current <see cref="Position"/>.
+    /// In buffer mode, slices the input span. In live mode, constructs a span from the process address.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    public unsafe ReadOnlySpan<byte> GetSpan(int length) =>
+        IsLiveMode
+            ? new ReadOnlySpan<byte>((byte*)(BaseAddress + (nint)Position), length)
+            : Input.Span.Slice((int)Position, length);
+
+    /// <summary>
+    /// Get a span from the current position to the end of input.
+    /// In live mode with no size hint, returns a span of <paramref name="maxLiveReadAhead"/> bytes.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    public unsafe ReadOnlySpan<byte> GetSpanToEnd(int maxLiveReadAhead = 65536)
+    {
+        if (!IsLiveMode)
+            return Input.Span.Slice((int)Position);
+
+        int available = _liveSizeHint > 0
+            ? (int)Math.Min(_liveSizeHint - Position, maxLiveReadAhead)
+            : maxLiveReadAhead;
+        return new ReadOnlySpan<byte>((byte*)(BaseAddress + (nint)Position), available);
+    }
 
     // Position stack operations
     public void PushPosition() => _positionStack.Push(Position);

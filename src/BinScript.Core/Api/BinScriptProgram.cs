@@ -42,6 +42,39 @@ public sealed class BinScriptProgram
         return engine.Parse(Bytecode, input, emitter, options, structIndex);
     }
 
+    // ─── Parse Live (process memory) ────────────────────────────────────
+
+    /// <summary>
+    /// Parse directly from a process memory address using the @root struct.
+    /// Position is a logical offset; actual read address = <paramref name="baseAddress"/> + offset.
+    /// </summary>
+    /// <param name="baseAddress">Start address of the struct in process memory.</param>
+    /// <param name="sizeHint">Advisory total size in bytes. 0 = unknown (unbounded, caller's risk).</param>
+    public ParseResult ParseLive(nint baseAddress, long sizeHint, IResultEmitter emitter, ParseOptions? options = null)
+    {
+        var engine = new ParseEngine();
+        return engine.ParseLive(Bytecode, baseAddress, sizeHint, emitter, options);
+    }
+
+    /// <summary>
+    /// Parse directly from a process memory address using a named entry point.
+    /// </summary>
+    public ParseResult ParseLive(nint baseAddress, long sizeHint, string entryPoint, IResultEmitter emitter, ParseOptions? options = null)
+    {
+        int structIndex = Bytecode.FindStructIndex(entryPoint);
+        if (structIndex < 0)
+        {
+            long inputSize = sizeHint > 0 ? sizeHint : long.MaxValue;
+            return new ParseResult(false, null,
+                [new Diagnostic(DiagnosticSeverity.Error, "API001",
+                    $"Struct '{entryPoint}' not found.", default)],
+                0, inputSize);
+        }
+
+        var engine = new ParseEngine();
+        return engine.ParseLive(Bytecode, baseAddress, sizeHint, emitter, options, structIndex);
+    }
+
     // ─── Produce ────────────────────────────────────────────────────────
 
     /// <summary>Produce binary data using the @root struct.</summary>

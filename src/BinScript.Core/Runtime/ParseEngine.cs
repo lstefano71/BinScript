@@ -985,11 +985,15 @@ public sealed class ParseEngine
                 }
                 case Opcode.ArrayNext:
                 {
+                    byte nullTermAdj = bytecode[ip++];
                     if (arrayStack.Count > 0)
                     {
                         var state = arrayStack.Pop();
-                        // Compute payload size of the element that was just read
-                        state.LastElementPayloadSize = ctx.Position - state.ElementStartPosition;
+                        // Compute payload size: position delta minus null-terminator overhead
+                        // For cstring elements, nullTermAdj strips the null terminator so
+                        // @last_size == 0 means "the last string was empty"
+                        long rawSize = ctx.Position - state.ElementStartPosition;
+                        state.LastElementPayloadSize = rawSize - nullTermAdj;
                         state.Index++;
                         arrayStack.Push(state);
                         ctx.SetCurrentArrayIndex(state.Index);
@@ -1472,10 +1476,11 @@ public sealed class ParseEngine
 
             Opcode.StrStartsWith or Opcode.StrEndsWith or Opcode.StrContains => 0,
 
-            // Array ops (no inline operands in Begin/Next/End themselves)
+            // Array ops
             Opcode.ArrayBeginCount or Opcode.ArrayBeginUntil or
             Opcode.ArrayBeginSentinel or Opcode.ArrayBeginGreedy or
-            Opcode.ArrayNext or Opcode.ArrayEnd => 0,
+            Opcode.ArrayEnd => 0,
+            Opcode.ArrayNext => 1, // nullTermAdj:u8
 
             // Array search ops
             Opcode.ArrayStoreElem => 2,            // arrayFieldId:u16

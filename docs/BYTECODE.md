@@ -194,7 +194,7 @@ These instructions handle flat, sequential struct reads with no control flow. A 
 | `ARRAY_BEGIN_UNTIL` | 0xD1 | — | Begin condition-terminated array. The termination condition is evaluated inline before `ARRAY_END` (not embedded in this opcode) |
 | `ARRAY_BEGIN_SENTINEL` | 0xD2 | — | Begin sentinel-terminated array. Uses `SENTINEL_SAVE`/`SENTINEL_CHECK` for element rollback on match |
 | `ARRAY_BEGIN_GREEDY` | 0xD3 | — | Begin greedy array (read until error) |
-| `ARRAY_NEXT` | 0xD4 | — | Advance to next element |
+| `ARRAY_NEXT` | 0xD4 | nullTermAdj:u8 | Advance to next element; computes `@last_size` = position delta − nullTermAdj (0 for most types, 1 for UTF-8 cstring, 2 for UTF-16 cstring) |
 | `ARRAY_END` | 0xD5 | — | End array loop. For `@until` arrays, pops the condition bool from stack |
 | **Array search** *(parse-only; see §3.3)* | | | |
 | `ARRAY_STORE_ELEM` | 0xD6 | array_field_id:u16 | Snapshot current element's field table into the array element store for later search |

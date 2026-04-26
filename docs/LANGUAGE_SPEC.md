@@ -745,7 +745,7 @@ In produce mode, the `_variant` field is required to determine which arm to prod
 | `@input_size` | `u64` | Total size of the input buffer in bytes |
 | `@offset` | `u64` | Current read position (bytes from start) |
 | `@remaining` | `u64` | Bytes remaining: `@input_size - @offset` |
-| `@last_size` | `u64` | Bytes consumed by the last array element (0 outside arrays) |
+| `@last_size` | `u64` | Logical payload size of the last array element; for cstring elements excludes null terminator (0 outside arrays) |
 | `_index` | `u64` | Current array element index (only valid inside arrays) |
 
 ## 9. Built-in Functions

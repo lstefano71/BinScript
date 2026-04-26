@@ -36,16 +36,16 @@ public class LastSizeTests
     private static string FormatDiags(IReadOnlyList<BinScript.Core.Model.Diagnostic> diags)
         => string.Join("\n", diags.Select(d => $"[{d.Severity}] {d.Message} at {d.Span}"));
 
-    // @last_size measures bytes consumed (position delta) per array element.
-    // For cstring, an empty string still consumes 1 byte (the null terminator),
-    // so the PCZZSTR (00T) termination condition is @last_size == 1, not 0.
+    // @last_size measures logical payload size per array element.
+    // For cstring, this excludes the null terminator — an empty string
+    // has @last_size == 0. For all other types, it equals bytes consumed.
 
     [Fact]
-    public void CStringArray_UntilLastSizeOne_TerminatesOnEmptyString()
+    public void CStringArray_UntilLastSizeZero_TerminatesOnEmptyString()
     {
         var source = """
             @root struct Strings {
-                items: cstring[] @until(@last_size == 1)
+                items: cstring[] @until(@last_size == 0)
             }
             """;
         var program = Compile(source);
@@ -55,7 +55,7 @@ public class LastSizeTests
         var root = ParseToElement(program, data);
         var items = root.GetProperty("items");
         Assert.Equal(JsonValueKind.Array, items.ValueKind);
-        // "hello" (6 bytes), "world" (6 bytes), "" (1 byte → terminates)
+        // "hello" (last_size=5), "world" (last_size=5), "" (last_size=0 → terminates)
         Assert.Equal(3, items.GetArrayLength());
         Assert.Equal("hello", items[0].GetString());
         Assert.Equal("world", items[1].GetString());
@@ -63,11 +63,11 @@ public class LastSizeTests
     }
 
     [Fact]
-    public void CStringArray_UntilLastSizeOne_SingleEmptyString()
+    public void CStringArray_UntilLastSizeZero_SingleEmptyString()
     {
         var source = """
             @root struct Strings {
-                items: cstring[] @until(@last_size == 1)
+                items: cstring[] @until(@last_size == 0)
             }
             """;
         var program = Compile(source);
@@ -177,12 +177,12 @@ public class LastSizeTests
     }
 
     [Fact]
-    public void LastSize_CString_MeasuresBytesConsumedIncludingNull()
+    public void LastSize_CString_ReportsLogicalPayloadExcludingNull()
     {
-        // "hi\0" → cstring consumes 3 bytes; "x\0" → 2 bytes; "\0" → 1 byte
+        // "hi\0" → cstring payload = 2; "x\0" → 1; "\0" → 0 (terminates)
         var source = """
             @root struct Data {
-                items: cstring[] @until(@last_size == 1)
+                items: cstring[] @until(@last_size == 0)
             }
             """;
         var program = Compile(source);
@@ -194,5 +194,31 @@ public class LastSizeTests
         Assert.Equal("hi", items[0].GetString());
         Assert.Equal("x", items[1].GetString());
         Assert.Equal("", items[2].GetString());
+    }
+
+    [Fact]
+    public void LastSize_StructContainingCString_ReportsWireBytes()
+    {
+        // When a struct contains a cstring, @last_size reports the full struct
+        // wire size (including the cstring's null terminator), NOT the cstring
+        // payload. The null-term adjustment only applies to direct cstring[] arrays.
+        var source = """
+            struct NamedEntry {
+                flags: u8,
+                name: cstring
+            }
+            @root struct Data {
+                entries: NamedEntry[] @until(@remaining == 0)
+            }
+            """;
+        var program = Compile(source);
+
+        // Entry 1: flags=1, name="ab\0" → 4 bytes (1 + 3)
+        // Entry 2: flags=2, name="c\0"  → 3 bytes (1 + 2)
+        var data = new byte[] { 1, (byte)'a', (byte)'b', 0, 2, (byte)'c', 0 };
+        var root = ParseToElement(program, data);
+        var entries = root.GetProperty("entries");
+        Assert.Equal(2, entries.GetArrayLength());
+        // @last_size for struct elements is wire bytes — no null-term stripping
     }
 }

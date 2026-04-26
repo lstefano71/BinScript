@@ -32,11 +32,13 @@ This reads null-terminated strings until it encounters an empty one (just a null
 
 ### Semantic Precision
 
-`@last_size` returns the **bytes consumed** by the last element (position delta). For `cstring`, this includes the null terminator — an empty cstring (`"\0"`) has `@last_size == 1`. For UTF-16 cstrings, an empty string (`\0\0`) has `@last_size == 2`.
+`@last_size` reports the **logical payload size** of the last element. For `cstring` array elements, the null terminator is excluded — an empty cstring has `@last_size == 0`. For UTF-16 cstrings, the 2-byte null terminator is likewise excluded. For all other element types (primitives, structs, etc.), `@last_size` equals the bytes consumed (position delta).
+
+This distinction is **array-scoped**, not opcode-scoped: it only applies when the array's direct element type is `cstring`. A struct that *contains* a cstring field still reports full wire bytes for `@last_size`.
 
 ### Relationship to BSX-Light
 
-In BSX-Light, the `00T` type specifier compiles to `cstring[] @until(@last_size == 1)` (or `@last_size == 2` for wide strings). The `00T` is syntactic sugar; `@last_size` is the primitive.
+In BSX-Light, the `00T` type specifier compiles to `cstring[] @until(@last_size == 0)` (or the same with `@encoding(utf16le)` for wide strings). The `00T` is syntactic sugar; `@last_size` is the primitive.
 
 ## Implementation
 

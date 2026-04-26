@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-04-26 22:23
+
+### Changed
+- **`@last_size` cstring semantics** — For `cstring[]` arrays, `@last_size` now reports logical payload size (excluding null terminator), so `@until(@last_size == 0)` naturally means "stop when the last string was empty." For all other types, `@last_size` remains bytes consumed (position delta). Implemented via a `nullTermAdj` operand on `ArrayNext` (0 for most types, 1 for UTF-8, 2 for UTF-16), determined at compile time from the array's element type.
+- **`ArrayNext` bytecode format** — Now takes a 1-byte operand (`nullTermAdj:u8`). Updated `ParseEngine`, `ProduceEngine`, `BytecodeEmitter`, and `BYTECODE.md`.
+
+### Added
+- **src/BinScript.Tests/Runtime/LastSizeTests.cs** — Added struct-containing-cstring regression test (9 tests total).
+
 ## 2026-04-26 22:07
 
 ### Added

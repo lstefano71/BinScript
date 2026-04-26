@@ -937,6 +937,18 @@ public sealed class BytecodeEmitter
         };
     }
 
+    /// <summary>
+    /// Returns the null-terminator byte size to subtract from position delta in ArrayNext,
+    /// so that @last_size reports logical payload size for cstring elements.
+    /// </summary>
+    private byte GetNullTermAdjustment(TypeReference elemType, FieldModifiers modifiers)
+    {
+        if (elemType is not CStringTypeRef) return 0;
+        var enc = ResolveEncoding(modifiers);
+        return (StringEncoding)enc is StringEncoding.Utf16Le or StringEncoding.Utf16Be
+            ? (byte)2 : (byte)1;
+    }
+
     private void EmitCStringRead(StructEmitContext ctx, ushort fieldId, FieldModifiers modifiers)
     {
         ctx.Builder.Emit(Opcode.ReadCString);
@@ -1420,6 +1432,7 @@ public sealed class BytecodeEmitter
         }
 
         ctx.Builder.Emit(Opcode.ArrayNext);
+        ctx.Builder.EmitU8(GetNullTermAdjustment(elemType, modifiers));
 
         // For until arrays, emit the condition check.
         if (arraySpec is UntilArraySpec untilSpec)

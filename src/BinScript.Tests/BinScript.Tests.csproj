@@ -23,6 +23,7 @@
   <ItemGroup>
     <ProjectReference Include="..\BinScript.Core\BinScript.Core.csproj" />
     <ProjectReference Include="..\BinScript.Emitters.Json\BinScript.Emitters.Json.csproj" />
+    <ProjectReference Include="..\BinScript.NALight\BinScript.NALight.csproj" />
     <ProjectReference Include="..\BinScript.Interop\BinScript.Interop.csproj" />
   </ItemGroup>
 

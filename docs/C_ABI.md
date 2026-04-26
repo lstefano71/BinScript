@@ -115,6 +115,36 @@ print(json.loads(result))
 lib.binscript_free(prog)
 ```
 
+## BSX-Light (⎕NA Superset)
+
+BSX-Light compiles Dyalog APL `⎕NA` superset specs directly to BinScript bytecode.
+
+```c
+// Compile a BSX-Light spec
+BinNA* na = binscript_na_compile("I4 user32|GetWindowTextW P <C2[256]");
+
+// Get the plain ⎕NA string for thin binding
+const char* plain = binscript_na_get_plain_na(na);  // "I4 user32|GetWindowTextW P <C2[]"
+binscript_mem_free((void*)plain);
+
+// Get the program handle for parse/produce
+BinScript* prog = binscript_na_get_program(na);
+const char* json = binscript_to_json(prog, data, len, NULL);
+// ...
+binscript_mem_free((void*)json);
+binscript_free(prog);
+binscript_na_free(na);
+```
+
+### Functions
+
+| Function | Description |
+|----------|-------------|
+| `binscript_na_compile(spec)` | Compile BSX-Light spec → `BinNA*` handle |
+| `binscript_na_get_plain_na(na)` | Plain ⎕NA string (caller frees) |
+| `binscript_na_get_program(na)` | `BinScript*` handle for parse/produce (caller frees) |
+| `binscript_na_free(na)` | Free the NA handle |
+
 ## Maintenance Checklist
 
 When the C-ABI surface changes (new functions, changed signatures, removed functions), update these files:

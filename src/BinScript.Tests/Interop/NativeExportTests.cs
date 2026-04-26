@@ -4,6 +4,7 @@ using BinScript.Core.Api;
 using BinScript.Core.Bytecode;
 using BinScript.Emitters.Json;
 using BinScript.Interop;
+using BinScript.NALight;
 
 /// <summary>
 /// Tests for the C-ABI interop layer.
@@ -399,5 +400,59 @@ public class NativeExportTests
         var result = compiler.Compile("@import \"types\" @root struct File { hdr: Header }");
         Assert.True(result.Success, string.Join("; ",
             result.Diagnostics.Select(d => d.Message)));
+    }
+
+    // ── BSX-Light (⎕NA superset) via HandleTable ─────────────────
+
+    [Fact]
+    public void NACompile_SimpleSpec_ReturnsHandle()
+    {
+        var result = NALightCompiler.Compile("I4 user32|Foo P");
+        Assert.True(result.Success, string.Join("; ", result.Diagnostics.Select(d => d.Message)));
+
+        var program = new BinScriptProgram(result.Inner.Program!);
+        var handle = HandleTable.Alloc(program);
+        Assert.NotEqual(IntPtr.Zero, handle);
+
+        HandleTable.Free(handle);
+    }
+
+    [Fact]
+    public void NACompile_GetPlainNA()
+    {
+        var result = NALightCompiler.Compile("I4 user32|GetWindowTextW P <C2[256]");
+        Assert.True(result.Success);
+        Assert.Contains("user32|GetWindowTextW", result.PlainNA);
+    }
+
+    [Fact]
+    public void NACompile_ParsesBinaryData()
+    {
+        var result = NALightCompiler.Compile("={U4 U2}");
+        Assert.True(result.Success, string.Join("; ", result.Diagnostics.Select(d => d.Message)));
+
+        var program = new BinScriptProgram(result.Inner.Program!);
+        byte[] data = [0x01, 0x00, 0x00, 0x00, 0x02, 0x00];
+        string json = program.ToJson(data);
+        Assert.Contains("1", json);
+        Assert.Contains("2", json);
+    }
+
+    [Fact]
+    public void NACompile_StructReturn_GetPlainNA_HasHiddenPointer()
+    {
+        // Struct > 8 bytes: return is {U8 U8} (16 bytes), triggers hidden pointer
+        var result = NALightCompiler.Compile("{U8 U8} lib|fn U4");
+        Assert.True(result.Success, string.Join("; ", result.Diagnostics.Select(d => d.Message)));
+        // Return becomes P (hidden pointer), and hidden >struct first arg is added
+        Assert.StartsWith("P", result.PlainNA.Split('|')[0].Trim());
+    }
+
+    [Fact]
+    public void NACompile_InvalidSpec_ReportsError()
+    {
+        // 'A' type is not supported
+        Assert.Throws<NAParseException>(() =>
+            NALightCompiler.Compile("A lib|fn"));
     }
 }

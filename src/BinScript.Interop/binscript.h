@@ -231,6 +231,46 @@ const uint8_t* binscript_from_json(BinScript* script,
                                     const char* params_json_utf8);
 
 /* ═══════════════════════════════════════════════════════
+ *  BSX-Light (⎕NA superset compiler)
+ * ═══════════════════════════════════════════════════════ */
+
+typedef struct BinNA BinNA;
+
+/**
+ * Compile a BSX-Light spec string (⎕NA superset) into an executable program.
+ *
+ * @param spec_utf8  BSX-Light spec, e.g.
+ *                   "I4 shell32|SHFileOperationW* ={P U4 <00T <00T U2 I4 P <0T}".
+ *                   UTF-8, null-terminated.
+ * @return Compiled NA handle, or NULL on error (check binscript_last_error).
+ */
+BinNA* binscript_na_compile(const char* spec_utf8);
+
+/**
+ * Get the plain ⎕NA string (extensions stripped) from a compiled NA handle.
+ * Caller must free the returned string with binscript_mem_free.
+ *
+ * @param na  Compiled NA handle.
+ * @return Plain ⎕NA string (UTF-8, null-terminated), or NULL on error.
+ */
+const char* binscript_na_get_plain_na(BinNA* na);
+
+/**
+ * Get the underlying BinScript program handle from a compiled NA handle.
+ * The returned handle can be used with binscript_to_json, binscript_from_json, etc.
+ * The returned handle must be freed separately with binscript_free.
+ *
+ * @param na  Compiled NA handle.
+ * @return Program handle, or NULL on error.
+ */
+BinScript* binscript_na_get_program(BinNA* na);
+
+/**
+ * Free a compiled NA handle. Safe to call with NULL.
+ */
+void binscript_na_free(BinNA* na);
+
+/* ═══════════════════════════════════════════════════════
  *  Memory management
  * ═══════════════════════════════════════════════════════ */
 

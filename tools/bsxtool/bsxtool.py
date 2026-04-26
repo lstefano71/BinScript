@@ -222,10 +222,18 @@ def _setup_signatures(lib: ctypes.CDLL) -> None:
         ctypes.c_char_p,   # params_json_utf8
     ]
 
+    # BSX-Light (⎕NA superset)
+    lib.binscript_na_compile.restype = ctypes.c_void_p
+    lib.binscript_na_compile.argtypes = [ctypes.c_char_p]  # spec_utf8
 
-# ═══════════════════════════════════════════════════════════════════════════════
-#  Helper: check errors
-# ═══════════════════════════════════════════════════════════════════════════════
+    lib.binscript_na_get_plain_na.restype = ctypes.c_void_p  # char* we must free
+    lib.binscript_na_get_plain_na.argtypes = [ctypes.c_void_p]  # na_handle
+
+    lib.binscript_na_get_program.restype = ctypes.c_void_p
+    lib.binscript_na_get_program.argtypes = [ctypes.c_void_p]  # na_handle
+
+    lib.binscript_na_free.restype = None
+    lib.binscript_na_free.argtypes = [ctypes.c_void_p]  # na_handle
 
 def _check_error(lib: ctypes.CDLL, context: str) -> None:
     err = lib.binscript_last_error()

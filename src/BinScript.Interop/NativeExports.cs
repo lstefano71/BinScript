@@ -595,4 +595,104 @@ public static unsafe class NativeExports
 
         return null;
     }
+
+    // ── BSX-Light (⎕NA superset) ────────────────────────────────────
+
+    /// <summary>Wrapper to keep NACompilationResult metadata alongside the program handle.</summary>
+    private sealed class NACompiledHandle
+    {
+        public BinScriptProgram Program { get; }
+        public string PlainNA { get; }
+        public NALight.NASpec Spec { get; }
+
+        public NACompiledHandle(BinScriptProgram program, string plainNA, NALight.NASpec spec)
+        {
+            Program = program;
+            PlainNA = plainNA;
+            Spec = spec;
+        }
+    }
+
+    /// <summary>
+    /// Compile a BSX-Light spec string (⎕NA superset) → opaque handle.
+    /// The handle can be used with <c>binscript_to_json</c> / <c>binscript_to_json_live</c>
+    /// via <c>binscript_na_get_program</c>, or queried for the plain ⎕NA string.
+    /// </summary>
+    [UnmanagedCallersOnly(EntryPoint = "binscript_na_compile")]
+    public static IntPtr NACompile(byte* spec)
+    {
+        try
+        {
+            ErrorState.Clear();
+            string specStr = Marshal.PtrToStringUTF8((IntPtr)spec) ?? "";
+            var result = NALight.NALightCompiler.Compile(specStr);
+            if (!result.Success)
+            {
+                var errors = string.Join("; ", result.Diagnostics
+                    .Where(d => d.Severity == Core.Model.DiagnosticSeverity.Error)
+                    .Select(d => d.Message));
+                ErrorState.Set($"NA compilation failed: {errors}");
+                return IntPtr.Zero;
+            }
+
+            var program = new BinScriptProgram(result.Inner.Program!);
+            var handle = new NACompiledHandle(program, result.PlainNA, result.Spec);
+            return HandleTable.Alloc(handle);
+        }
+        catch (Exception ex)
+        {
+            ErrorState.Set(ex.Message);
+            return IntPtr.Zero;
+        }
+    }
+
+    /// <summary>
+    /// Get the plain ⎕NA string from a BSX-Light compiled handle.
+    /// Caller must free the returned string with <c>binscript_mem_free</c>.
+    /// </summary>
+    [UnmanagedCallersOnly(EntryPoint = "binscript_na_get_plain_na")]
+    public static byte* NAGetPlainNA(IntPtr naHandle)
+    {
+        try
+        {
+            ErrorState.Clear();
+            var handle = HandleTable.Get<NACompiledHandle>(naHandle);
+            if (handle is null) { ErrorState.Set("Invalid NA handle"); return null; }
+            return AllocUtf8(handle.PlainNA);
+        }
+        catch (Exception ex)
+        {
+            ErrorState.Set(ex.Message);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Get the underlying BinScript program handle from a BSX-Light compiled handle.
+    /// The returned handle can be used with <c>binscript_to_json</c> etc.
+    /// The returned handle is owned by the NA handle — do NOT free it separately.
+    /// </summary>
+    [UnmanagedCallersOnly(EntryPoint = "binscript_na_get_program")]
+    public static IntPtr NAGetProgram(IntPtr naHandle)
+    {
+        try
+        {
+            ErrorState.Clear();
+            var handle = HandleTable.Get<NACompiledHandle>(naHandle);
+            if (handle is null) { ErrorState.Set("Invalid NA handle"); return IntPtr.Zero; }
+            return HandleTable.Alloc(handle.Program);
+        }
+        catch (Exception ex)
+        {
+            ErrorState.Set(ex.Message);
+            return IntPtr.Zero;
+        }
+    }
+
+    /// <summary>Free a BSX-Light compiled handle.</summary>
+    [UnmanagedCallersOnly(EntryPoint = "binscript_na_free")]
+    public static void NAFree(IntPtr naHandle)
+    {
+        HandleTable.Free(naHandle);
+    }
 }

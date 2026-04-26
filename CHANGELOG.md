@@ -1,5 +1,34 @@
 # Changelog
 
+## 2026-04-26 22:07
+
+### Added
+- **`@last_size` built-in variable** — New runtime pseudo-variable returning bytes consumed by the most recently read array element. Enables sentinel-terminated array patterns like PCZZSTR (`cstring[] @until(@last_size == 1)`). Tracked via `ElementStartPosition`/`LastElementPayloadSize` in `ArrayLoopState`.
+- **src/BinScript.Tests/Runtime/LastSizeTests.cs** — 8 tests: cstring double-null termination, fixed-size elements, variable-size structs, outside-array behavior.
+
+### Changed
+- **docs/LANGUAGE_SPEC.md** — Added `@last_size` to keyword list and pseudo-variables table.
+- **docs/BYTECODE.md** — Updated `PUSH_RUNTIME_VAR` operand docs (var_id 3 = @last_size).
+- **docs/features/FEATURE-last-size-sentinel.md** — Corrected semantics: measures bytes consumed (position delta), not payload minus terminator.
+
+## 2026-04-26 21:09
+
+### Added
+- **Dual-mode ParseContext** — `ParseContext` now supports live memory mode (`IsLiveMode`, `BaseAddress`) for pointer chasing in process memory without buffer copies. New `GetSpan`/`GetSpanToEnd` methods unify buffer and live access.
+- **`ParseEngine.ParseLive`** / **`BinScriptProgram.ParseLive`** — New entry points for parsing from live memory addresses.
+- **`ToJsonLive` extension methods** — JSON convenience methods for live-mode parsing.
+- **C-ABI: `binscript_to_json_live`, `binscript_to_json_live_entry`** — New exports for live memory parsing from native code.
+- **src/BinScript.Tests/Runtime/LiveModeParseTests.cs** — 15 tests including pointer chasing with `NativeMemory.Alloc`.
+- **docs/adr/ADR-005-dual-mode-parse-context.md** — Architectural decision record.
+- **docs/adr/ADR-006-bsx-light-na-superset.md** — Architectural decision record for BSX-Light.
+- **docs/features/FEATURE-dual-mode-parse-context.md**, **FEATURE-last-size-sentinel.md**, **FEATURE-bsx-light-compiler.md** — Detailed feature specs.
+
+### Changed
+- **docs/ARCHITECTURE.md** — Linked ADR-005 and ADR-006.
+- **src/BinScript.Interop/binscript.h** — Added live-mode function declarations.
+- **tools/bsxtool/bsxtool.py** — Added ctypes signatures for live-mode functions.
+- **docs/C_ABI.md** — Added live-mode usage example.
+
 ## 2026-04-25 23:41
 
 ### Added

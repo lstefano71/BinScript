@@ -1,5 +1,36 @@
 # Changelog
 
+## 2026-04-26 23:09
+
+### Added
+- **BSX-Light C-ABI exports** — Four new C-ABI functions for BSX-Light (⎕NA superset):
+  - `binscript_na_compile` — compile BSX-Light spec → opaque `BinNA*` handle
+  - `binscript_na_get_plain_na` — get plain ⎕NA string with extensions stripped
+  - `binscript_na_get_program` — extract `BinScript*` handle for parse/produce
+  - `binscript_na_free` — free the NA handle
+- **BSX-Light APL integration** (`tools/bsxna/`) — `bsxna` namespace with `Init`, `Compile`, `Parse`, `Free` for calling BSX-Light from Dyalog APL. Uses `⎕JSON` for v1 data exchange.
+- **src/BinScript.Tests/Interop/NativeExportTests.cs** — 5 new BSX-Light interop tests.
+
+### Changed
+- **src/BinScript.Interop/binscript.h** — Added `BinNA*` opaque handle and BSX-Light function declarations.
+- **docs/C_ABI.md** — Added BSX-Light section with usage examples.
+- **tools/bsxtool/bsxtool.py** — Added ctypes signatures for BSX-Light functions.
+
+## 2026-04-26 23:03
+
+### Added
+- **BSX-Light Phase 2 extensions** — counted arrays (`[*]`), alignment (`@aligned`, `@pack(N)`), and struct return transform (hidden-pointer for structs > 8 bytes).
+
+## 2026-04-26 22:54
+
+### Added
+- **BSX-Light parser and compiler** — `NASpec` intermediate representation, `NAParser`, `NACodeGen` (produces BinScript AST directly), `NALightCompiler`. 56 parser tests + 22 end-to-end compiler tests.
+
+## 2026-04-26 22:35
+
+### Added
+- **BSX-Light lexer** — `NALexer` tokenizer for ⎕NA superset syntax. 25 tests.
+
 ## 2026-04-26 22:23
 
 ### Changed

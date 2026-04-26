@@ -1,0 +1,97 @@
+#!/usr/local/bin/dyalogscript
+⍝ ══════════════════════════════════════════════════════════════════════════
+⍝  BSX-Light APL Integration — bsx∆NA
+⍝
+⍝  Provides bsx∆NA (tradfn) that compiles a BSX-Light spec and returns
+⍝  a function for calling the foreign function with rich struct handling.
+⍝
+⍝  Usage:
+⍝      )COPY tools/bsxna/bsxna
+⍝      fn ← bsx∆NA 'I4 user32|MessageBoxW P <0T <0T U4'
+⍝      fn (0 (⊂'Hello') (⊂'Title') 0)
+⍝
+⍝  The returned fn follows ⎕NA conventions for arguments.
+⍝  Return values from struct-returning functions are parsed to nested
+⍝  APL arrays via JSON (v1 — future versions will use DWA for zero-copy).
+⍝
+⍝  Prerequisites:
+⍝      dotnet publish src/BinScript.Interop -c Release
+⍝      Set BINSCRIPT_DLL or place DLL on default search path.
+⍝ ══════════════════════════════════════════════════════════════════════════
+
+⍝ ── Configuration ──────────────────────────────────────────────────────
+
+:Namespace bsxna
+
+    ∇ Init
+    ⍝ Initialize the BSX-Light integration.
+    ⍝ Call once before first use of bsx∆NA.
+      dll←FindDLL
+      :If 0=≢dll
+          ⎕←'ERROR: Cannot find BinScript.Interop DLL.'
+          ⎕←'Set BINSCRIPT_DLL environment variable or publish the DLL.'
+          →0
+      :EndIf
+      ⍝ Bind C-ABI functions
+      ⎕NA'P ',dll,'|binscript_na_compile <0T'
+      ⎕NA'P ',dll,'|binscript_na_get_plain_na P'
+      ⎕NA'P ',dll,'|binscript_na_get_program P'
+      ⎕NA dll,'|binscript_na_free P'
+      ⎕NA'P ',dll,'|binscript_to_json_live P P P <0T'
+      ⎕NA dll,'|binscript_mem_free P'
+      ⎕NA dll,'|binscript_free P'
+      ⎕NA'P ',dll,'|binscript_last_error'
+      Initialized←1
+    ∇
+
+    ∇ path←FindDLL
+    ⍝ Locate the BinScript NativeAOT DLL.
+      :If 0≠≢2 ⎕NQ'.' 'GetEnvironment' 'BINSCRIPT_DLL'
+          path←2 ⎕NQ'.' 'GetEnvironment' 'BINSCRIPT_DLL'
+      :Else
+          ⍝ Default: look relative to repo root
+          path←'BinScript.Interop'
+      :EndIf
+    ∇
+
+    ∇ r←Compile spec;naHandle;plainPtr;plain;progHandle;err
+    ⍝ Compile a BSX-Light spec string.
+    ⍝ Returns: (naHandle progHandle plainNA)
+    ⍝   naHandle   — opaque handle to the compiled NA spec (free with Free)
+    ⍝   progHandle — opaque BinScript program handle (for binscript_to_json_live)
+    ⍝   plainNA    — the plain ⎕NA string with extensions stripped
+      :If 0=⎕NC'Initialized'
+          Init
+      :EndIf
+      naHandle←binscript_na_compile(⊂spec)
+      :If naHandle=0
+          err←⎕UCS ⎕DR binscript_last_error 0
+          11 ⎕SIGNAL⍨'BSX-Light compilation failed: ',err
+      :EndIf
+      ⍝ Get plain ⎕NA string
+      plainPtr←binscript_na_get_plain_na naHandle
+      plain←⎕UCS ⎕DR plainPtr
+      binscript_mem_free plainPtr
+      ⍝ Get program handle
+      progHandle←binscript_na_get_program naHandle
+      r←naHandle progHandle plain
+    ∇
+
+    ∇ Free naHandle
+    ⍝ Free a compiled NA handle.
+      binscript_na_free naHandle
+    ∇
+
+    ∇ r←Parse(progHandle baseAddr sizeHint);jsonPtr;json
+    ⍝ Parse a memory region using the compiled program.
+    ⍝ Returns the parsed data as an APL nested array (via ⎕JSON).
+      jsonPtr←binscript_to_json_live progHandle baseAddr sizeHint(⊂'')
+      :If jsonPtr=0
+          11 ⎕SIGNAL⍨'BSX-Light parse failed: ',⎕UCS ⎕DR binscript_last_error 0
+      :EndIf
+      json←⎕UCS ⎕DR jsonPtr
+      binscript_mem_free jsonPtr
+      r←⎕JSON json
+    ∇
+
+:EndNamespace

@@ -92,3 +92,17 @@ struct OptionalHeader(arch) {
 - Is `@at ... when guard { }` sufficient for most use cases?
 
 **Complexity**: High. Affects parser, AST, emitter, both runtime engines, and data source/emitter interfaces.
+
+---
+
+## libffi Backend — Bypass ⎕NA Entirely
+
+**Motivation**: Replace Dyalog APL's `⎕NA` as the foreign-call mechanism with a bridge DLL combining BinScript's produce/parse engines, BSX-Light's type language, and [libffi](https://github.com/libffi/libffi) for platform-native calling-convention dispatch. This eliminates all `⎕NA` limitations (no struct returns, no direction markers inside structs, no auto-alignment, no counted arrays, no variadic support) and provides full ABI coverage on Windows x64, Linux x64/ARM64, and macOS ARM64.
+
+APL communicates with the bridge via JSON over a handful of trivial `⎕NA` bindings (scalars and strings only). All complex marshalling and ABI handling happens inside the bridge, invisible to APL. No runtime code generation — libffi's `ffi_call` is purely data-driven.
+
+**Full design**: See [FEATURE-libffi-backend.md](features/FEATURE-libffi-backend.md).
+
+**Dependencies**: BSX-Light compiler, dual-mode ParseContext, `@last_size` sentinel, libffi 3.5.x.
+
+**Complexity**: High. New bridge DLL project, NativeAOT + static libffi linking, per-platform ABI conformance testing, phased delivery (calls → callbacks → fast path).

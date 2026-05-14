@@ -95,6 +95,23 @@ struct OptionalHeader(arch) {
 
 ---
 
+## Protocol Buffers / TLV Format Support
+
+**Motivation**: Protobuf is the dominant binary serialization format for modern infrastructure (OpenTelemetry, gRPC, etc.). BinScript currently only supports positional formats (fixed field order). Protobuf is tag-driven (fields in any order, self-describing via TLV tags). Supporting protobuf requires:
+
+1. **Varint primitives** (`uvarint`, `ivarint`, `svarint`) — base-128 MSB-continuation encoding
+2. **Tag-based field dispatch** — a new struct execution mode (`@encoding(protobuf)` or `@tagged`)
+3. **Non-contiguous repeated field accumulation**
+4. **Length-scoped sub-buffer parsing**
+
+**Full design**: See [FEATURE-protobuf-support.md](features/FEATURE-protobuf-support.md).
+
+**Dependencies**: Varint type support is foundational; TLV dispatch builds on top. The `if`/`else` extension (below) is complementary.
+
+**Complexity**: Very High. New primitive types, new opcodes, new struct execution mode, changes to both runtime engines.
+
+---
+
 ## libffi Backend — Bypass ⎕NA Entirely
 
 **Motivation**: Replace Dyalog APL's `⎕NA` as the foreign-call mechanism with a bridge DLL combining BinScript's produce/parse engines, BSX-Light's type language, and [libffi](https://github.com/libffi/libffi) for platform-native calling-convention dispatch. This eliminates all `⎕NA` limitations (no struct returns, no direction markers inside structs, no auto-alignment, no counted arrays, no variadic support) and provides full ABI coverage on Windows x64, Linux x64/ARM64, and macOS ARM64.

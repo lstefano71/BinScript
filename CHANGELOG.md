@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-05-14 11:14
+
+### Added
+- **docs/features/FEATURE-protobuf-support.md** — Feature request document for Protocol Buffers wire format support, motivated by OpenTelemetry (OTEL) payloads. Includes full gap analysis, wire format reference, phased delivery plan, and open design questions.
+- **docs/FUTURE_EXTENSIONS.md** — Added Protocol Buffers / TLV Format Support entry linking to the feature document.
+
 ## 2026-04-26 23:09
 
 ### Added
